@@ -1,0 +1,9 @@
+/* App container styling */
+/* This is the main wrapper for the entire application */
+.app {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #0a0e27; /* Dark blue-black background */
+}

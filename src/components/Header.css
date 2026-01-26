@@ -1,0 +1,125 @@
+/* Header container styling – compact navbar, slightly taller (2–3px) */
+.header {
+  width: 100%;
+  padding: 0.75rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #0d1129;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Logo link - removes default link styling */
+.logo-link {
+  text-decoration: none; /* Removes underline */
+  color: inherit; /* Inherits text color */
+  display: flex;
+  align-items: center;
+}
+
+/* Logo container - holds the dot and text */
+.logo-container {
+  display: flex;
+  align-items: center;
+  position: relative;
+  cursor: pointer; /* Indicates it's clickable */
+}
+
+/* Blue dot positioned above the Q */
+.logo-dot {
+  width: 6px;
+  height: 6px;
+  background-color: #4a9eff;
+  border-radius: 50%;
+  position: absolute;
+  top: -6px;
+  left: 14px;
+  box-shadow: 0 0 8px rgba(74, 158, 255, 0.5);
+}
+
+/* SQORA logo text – slightly smaller for compact nav */
+.logo-text {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  font-family: sans-serif;
+}
+
+/* Authentication buttons container */
+.auth-buttons {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+/* Base button styling – compact for smaller nav */
+.btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  font-family: sans-serif;
+  text-decoration: none;
+  display: inline-block;
+  text-align: center;
+}
+
+/* Primary button (Log In) - blue background */
+.btn-primary {
+  background-color: #4a9eff; /* Vibrant blue */
+  color: #ffffff;
+}
+
+/* Primary button hover effect - enhanced animation */
+/* Reference: Provides visual feedback when hovering over Log In button */
+.btn-primary:hover {
+  background-color: #3a8eef; /* Slightly darker blue on hover */
+  transform: translateY(-2px); /* Enhanced lift effect */
+  box-shadow: 0 5px 15px rgba(74, 158, 255, 0.4); /* Blue glow shadow */
+}
+
+/* Primary button active/click effect */
+/* Reference: Provides visual feedback when Log In button is clicked */
+.btn-primary:active {
+  transform: translateY(0); /* Returns to original position */
+  box-shadow: 0 2px 8px rgba(74, 158, 255, 0.3); /* Reduced shadow */
+}
+
+/* Secondary button (Sign Up) - gray background */
+/* Reference: Matches the gray Sign Up button in the design photo */
+.btn-secondary {
+  background-color: #e0e0e0; /* Light gray */
+  color: #333333; /* Dark gray text */
+}
+
+/* Secondary button hover effect - enhanced animation */
+/* Reference: Provides visual feedback when hovering over Sign Up button */
+.btn-secondary:hover {
+  background-color: #d0d0d0; /* Slightly darker gray on hover */
+  transform: translateY(-2px); /* Enhanced lift effect */
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2); /* Subtle shadow */
+}
+
+/* Secondary button active/click effect */
+/* Reference: Provides visual feedback when Sign Up button is clicked */
+.btn-secondary:active {
+  transform: translateY(0); /* Returns to original position */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); /* Reduced shadow */
+}
+
+/* Logo link hover effect - adds interactivity to logo */
+/* Reference: Makes logo feel clickable when hovered */
+.logo-link:hover .logo-text {
+  color: rgba(255, 255, 255, 0.9); /* Slight color change on hover */
+  transition: color 0.3s ease; /* Smooth transition */
+}
+
+.logo-link:hover .logo-dot {
+  box-shadow: 0 0 15px rgba(74, 158, 255, 0.7); /* Enhanced glow on hover */
+  transition: box-shadow 0.3s ease; /* Smooth transition */
+}

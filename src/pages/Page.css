@@ -1,0 +1,36 @@
+/* Common page styling for all feature pages */
+/* This provides consistent styling for pages like AI Mentor, Contests, etc. */
+.page-content {
+  flex: 1; /* Takes up remaining vertical space */
+  width: 100%;
+  min-height: calc(100vh - 56px); /* Match compact header height */
+  background-color: #0a0e27; /* Dark blue-black background */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem;
+}
+
+/* Page container - centers the content */
+.page-container {
+  text-align: center;
+  max-width: 800px;
+}
+
+/* Page title styling */
+.page-title {
+  font-size: 3rem;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 1.5rem;
+  font-family: sans-serif;
+  letter-spacing: 2px;
+}
+
+/* Page description styling */
+.page-description {
+  font-size: 1.2rem;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.6;
+  font-family: sans-serif;
+}

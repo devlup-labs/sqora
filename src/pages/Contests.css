@@ -1,0 +1,244 @@
+/* Contests page – light theme, contrasting with dark landing page */
+/* Layout inspired by Codeforces /contests: main content left, filter sidebar right */
+/* Uses white/off-white backgrounds and dark text; landing page remains dark. */
+
+.app-contests {
+  background-color: #f5f5f5;
+}
+
+.app-contests .contests-main {
+  flex: 1;
+  min-height: calc(100vh - 56px);
+  background-color: #f5f5f5;
+  color: #1a1a1a;
+}
+
+/* Two-column layout: content + sidebar */
+.contests-layout {
+  display: flex;
+  gap: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 1.5rem 2rem;
+  align-items: flex-start;
+}
+
+.contests-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.contests-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+}
+
+/* Section titles */
+.contests-section {
+  margin-bottom: 2rem;
+}
+
+.contests-section-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: #1a1a1a;
+}
+
+/* Tables – light gray header, white rows, light gray borders */
+.contests-table-wrapper {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.contests-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.contests-table th,
+.contests-table td {
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.contests-table th {
+  background: #f0f0f0;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.contests-table tbody tr:hover {
+  background: #fafafa;
+}
+
+.contests-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Contest code – distinct styling */
+.contest-code {
+  font-weight: 600;
+  color: #1a1a1a;
+  font-family: ui-monospace, monospace;
+}
+
+/* Links styled as buttons for interactivity */
+.contest-name-link,
+.date-link,
+.action-link,
+.sidebar-attention-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #0066cc;
+  text-decoration: underline;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.contest-name-link:hover,
+.date-link:hover,
+.action-link:hover,
+.sidebar-attention-link:hover {
+  color: #004499;
+}
+
+.past-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.past-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.past-extra-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.participants {
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.badge {
+  font-size: 0.75rem;
+  color: #666;
+  background: #f0f0f0;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+}
+
+/* Sidebar blocks */
+.sidebar-block {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.sidebar-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: #1a1a1a;
+}
+
+.sidebar-attention-link {
+  display: block;
+  margin-top: 0.5rem;
+}
+
+/* Filter form */
+.filter-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.filter-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #333;
+}
+
+.filter-select,
+.filter-input {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.9rem;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  background: #fff;
+  color: #1a1a1a;
+}
+
+.filter-input::placeholder {
+  color: #999;
+}
+
+.filter-select:hover,
+.filter-input:hover {
+  border-color: #b0b0b0;
+}
+
+.filter-select:focus,
+.filter-input:focus {
+  outline: none;
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+}
+
+.filter-btn {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #1a1a1a;
+  background: #f0f0f0;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s;
+}
+
+.filter-btn:hover {
+  background: #e8e8e8;
+  border-color: #b0b0b0;
+}
+
+.filter-btn:active {
+  transform: scale(0.98);
+}
+
+@media (max-width: 900px) {
+  .contests-layout {
+    flex-direction: column;
+  }
+
+  .contests-sidebar {
+    width: 100%;
+    max-width: 400px;
+  }
+
+  .contests-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .contests-table {
+    min-width: 520px;
+  }
+}

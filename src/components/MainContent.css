@@ -1,0 +1,208 @@
+/* Main content area styling */
+/* This is the main content area with dark background and gradient effect */
+.main-content {
+  flex: 1;
+  width: 100%;
+  position: relative;
+  background-color: #0a0e27;
+  min-height: calc(100vh - 56px); /* Match compact header height */
+  overflow: hidden;
+}
+
+/* Radial gradient overlay - creates the soft blue circular glow in the center */
+/* Reference: This matches the soft blue circle shown in the design photo */
+/* This creates a soft, diffused blue glow effect that blends into the dark background */
+.gradient-overlay {
+  position: absolute;
+  top: 50%; /* Center vertically */
+  left: 50%; /* Center horizontally */
+  transform: translate(-50%, -50%); /* Perfect centering */
+  width: 600px; /* Width of the gradient circle - adjusted to match photo */
+  height: 600px; /* Height of the gradient circle */
+  background: radial-gradient(
+    circle,
+    rgba(74, 158, 255, 0.2) 0%, /* Light blue at center with transparency */
+    rgba(74, 158, 255, 0.1) 30%, /* Fading blue */
+    rgba(74, 158, 255, 0.05) 50%, /* More fading */
+    transparent 80% /* Fully transparent at edges */
+  );
+  pointer-events: none; /* Allows clicks to pass through */
+  z-index: 1; /* Behind the cards */
+  border-radius: 50%; /* Ensures perfect circle shape */
+}
+
+/* Sphere removed - replaced with simple soft blue circular glow */
+/* Reference: Design shows a soft blue circle, not a 3D sphere */
+
+/* Cards container - holds all three feature cards */
+.cards-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 56px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem;
+}
+
+/* Feature card base styling – AI Mentor, Contests, Doubt Solver */
+.feature-card {
+  position: absolute;
+  background-color: rgba(20, 25, 45, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 25px;
+  padding: 2rem 3rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+  min-width: 200px;
+  text-decoration: none;
+  display: block;
+  color: inherit;
+}
+
+/* Landing card hover: color change, slight pop up, clear border */
+.feature-card:hover {
+  background-color: rgba(30, 40, 70, 0.9);
+  border: 2px solid rgba(74, 158, 255, 0.7);
+  box-shadow: 0 12px 36px rgba(74, 158, 255, 0.35);
+  transform: translateY(-6px) scale(1.03);
+  color: #e8f0ff;
+}
+
+/* Feature card active/click effect */
+.feature-card:active {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 6px 24px rgba(74, 158, 255, 0.25);
+}
+
+/* AI Mentor card - upper-left quadrant with animations */
+/* Reference: Positioned above and to the left of center circle in design */
+/* Animation: Curved motion + pulse effect for visual appeal */
+.card-1 {
+  top: 20%; /* Base position from top */
+  left: 15%; /* Base position from left */
+  animation: curveMotion1 6s ease-in-out infinite, pulseGlow 3s ease-in-out infinite; /* Combined animations */
+}
+
+/* Contests card - upper-right quadrant with animations */
+/* Reference: Positioned above and to the right of center circle in design */
+/* Animation: Curved motion + pulse effect for visual appeal */
+.card-2 {
+  top: 20%; /* Base position from top */
+  right: 15%; /* Base position from right */
+  animation: curveMotion2 6s ease-in-out infinite, pulseGlow 3s ease-in-out infinite 1s; /* Combined animations with delay */
+}
+
+/* Doubt Solver card - bottom-center with animations */
+.card-3 {
+  bottom: 20%;
+  left: 50%;
+  animation: curveMotion3 6s ease-in-out infinite, pulseGlow 3s ease-in-out infinite 2s;
+}
+
+/* Keep horizontal centering on hover/active for bottom-center card */
+.card-3:hover {
+  transform: translate(-50%, -6px) scale(1.03);
+}
+
+.card-3:active {
+  transform: translate(-50%, -2px) scale(1.01);
+}
+
+/* Curved motion animation for card 1 (AI Mentor) */
+/* Reference: Creates smooth floating effect - moves in curved path */
+/* Animation: Moves up and to the right, then back to original position */
+@keyframes curveMotion1 {
+  0%, 100% {
+    transform: translate(0, 0); /* Starting position */
+  }
+  50% {
+    transform: translate(30px, -25px); /* Moves right and up in an arc */
+  }
+}
+
+/* Curved motion animation for card 2 (Contests) */
+/* Reference: Creates smooth floating effect - moves in curved path */
+/* Animation: Moves up and to the left, then back to original position */
+@keyframes curveMotion2 {
+  0%, 100% {
+    transform: translate(0, 0); /* Starting position */
+  }
+  50% {
+    transform: translate(-30px, -25px); /* Moves left and up in an arc */
+  }
+}
+
+/* Curved motion animation for card 3 (Doubt Solver) */
+/* Reference: Creates smooth floating effect - moves in curved path */
+/* Animation: Moves up slightly, then back down to original position */
+@keyframes curveMotion3 {
+  0%, 100% {
+    transform: translate(-50%, 0); /* Starting position (centered) */
+  }
+  50% {
+    transform: translate(-50%, -20px); /* Moves up in an arc */
+  }
+}
+
+/* Pulse glow animation for all cards */
+/* Reference: Adds subtle pulsing glow effect to make buttons more interactive */
+/* Animation: Creates breathing effect with glow intensity */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(74, 158, 255, 0.1); /* Subtle glow */
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(74, 158, 255, 0.25); /* Enhanced glow */
+  }
+}
+
+/* Card title styling */
+.card-title {
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: #ffffff;
+  text-align: center;
+  font-family: sans-serif;
+  letter-spacing: 1px;
+}
+
+/* Responsive design for smaller screens */
+@media (max-width: 768px) {
+  /* Adjust card positions for mobile */
+  .feature-card {
+    position: relative;
+    margin: 1rem 0;
+    width: 80%;
+    max-width: 300px;
+  }
+  
+  /* Disable animations on mobile for better performance */
+  .card-1,
+  .card-2,
+  .card-3 {
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    transform: none;
+    animation: none; /* Disable animations on mobile */
+  }
+  
+  /* Reduce gradient size on mobile */
+  .gradient-overlay {
+    width: 500px;
+    height: 500px;
+  }
+  
+  /* Gradient overlay size adjustment for mobile */
+  .gradient-overlay {
+    width: 400px;
+    height: 400px;
+  }
+}

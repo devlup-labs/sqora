@@ -1,0 +1,25 @@
+/* Global CSS reset and base styles */
+/* This ensures consistent styling across all browsers */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Body styling - sets the base dark background */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #0a0e27; /* Very dark blue-black background */
+  color: #ffffff;
+  overflow-x: hidden;
+}
+
+/* Root element styling */
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
