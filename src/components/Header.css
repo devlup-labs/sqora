@@ -123,3 +123,43 @@
   box-shadow: 0 0 15px rgba(74, 158, 255, 0.7); /* Enhanced glow on hover */
   transition: box-shadow 0.3s ease; /* Smooth transition */
 }
+
+/* Responsive header for tablets and phones */
+@media (max-width: 768px) {
+  .header {
+    padding: 0.6rem 1.1rem;
+  }
+
+  .logo-text {
+    font-size: 1.05rem;
+  }
+
+  .auth-buttons {
+    gap: 0.4rem;
+  }
+
+  .btn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .header {
+    padding: 0.5rem 0.9rem;
+  }
+
+  .logo-text {
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+  }
+
+  .auth-buttons {
+    gap: 0.35rem;
+  }
+
+  .btn {
+    padding: 0.35rem 0.6rem;
+    font-size: 0.78rem;
+  }
+}

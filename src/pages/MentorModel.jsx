@@ -10,8 +10,8 @@ export function MentorModel({ isSpeaking, ...props }) {
   const { actions } = useAnimations(animations, group)
 
   // --- ADJUST LIP SYNC HERE ---
-  const LIP_SPEED = 3;        // Lower = Slower mouth movement
-  const LIP_INTENSITY = 0.4;  // How wide the mouth opens
+  const LIP_SPEED = 4;        // Lower = Slower mouth movement
+  const LIP_INTENSITY = 0.6;  // How wide the mouth opens
   // ----------------------------
 
   // 1. LIP SYNC LOGIC
@@ -52,6 +52,18 @@ export function MentorModel({ isSpeaking, ...props }) {
       idleAction?.reset().fadeIn(0.5).play();
     }
   }, [isSpeaking, actions]);
+
+  // 3. START IDLE ANIMATION ON MOUNT
+  useEffect(() => {
+    const clips = Object.values(actions);
+    // const idleAction = clips.find(a => a.getClip().name.toLowerCase().includes('idle')) || clips[1];
+    const idleAction = actions['Your_Exact_Animation_Name'];
+    
+    // Play idle animation immediately when component mounts
+    if (idleAction) {
+      idleAction.reset().play();
+    }
+  }, [actions]);
 
   return (
     <group ref={group} {...props} dispose={null}>

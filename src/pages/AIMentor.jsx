@@ -1,104 +1,226 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Environment, ContactShadows } from '@react-three/drei'
+import { Environment, ContactShadows } from '@react-three/drei'
 import Header from '../components/Header'
 import { MentorModel } from './MentorModel'
+import { useAppConfig } from '../store/useAppConfig'
 import './aimentor.css'
 
 function AIMentor() {
-  const [input, setInput] = useState("");
-  const [messages, setMessages] = useState([
-    { role: 'ai', text: 'Hello! I am your JEE/NEET mentor. How can I help you today?' }
-  ]);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const scrollRef = useRef();
-
-  // Auto-scroll to latest message
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
-
-  const handleSend = () => {
-    if (!input.trim()) return;
-
-    // 1. Add User Message
-    const newMessages = [...messages, { role: 'user', text: input }];
-    setMessages(newMessages);
-    setInput("");
-
-    // 2. Simulate AI "Thinking"
-    setTimeout(() => {
-      const aiResponse = "That's a great question about your prep! To master this topic, you should focus on the fundamental concepts first.";
-      
-      setMessages(prev => [...prev, { role: 'ai', text: aiResponse }]);
-      
-      // 3. Trigger Animation & Voice
-      triggerMentorResponse(aiResponse);
-    }, 1000);
-  };
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const [lastQuestion, setLastQuestion] = useState('')
+  const [lastAnswer, setLastAnswer] = useState('')
+  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [chatInput, setChatInput] = useState('')
+  const { mentorGreeting, voiceEnabled } = useAppConfig()
+  const [chatMessages, setChatMessages] = useState(() => [
+    {
+      role: 'ai',
+      text:
+        mentorGreeting ||
+        'Hi! I am your AI mentor. Tap the mic or open chat to ask anything about your prep.',
+    },
+  ])
+  const recognitionRef = useRef(null)
 
   const triggerMentorResponse = (text) => {
     // Start Animation
-    setIsSpeaking(true);
+    setIsSpeaking(true)
 
-    // Optional: Built-in Browser Voice (Free)
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = () => setIsSpeaking(false); // Stop animation when done talking
-    window.speechSynthesis.speak(utterance);
+    if (voiceEnabled && 'speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.onend = () => setIsSpeaking(false) // Stop animation when done talking
+      window.speechSynthesis.speak(utterance)
+    } else {
+      // Fallback: stop animation after a short delay
+      setTimeout(() => setIsSpeaking(false), 3000)
+    }
+  }
 
-    // Fallback if voice is disabled: stop animation after 4 seconds
-    // setTimeout(() => setIsSpeaking(false), 4000); 
-  };
+  const createDemoResponse = (questionText) => {
+    return "This is a demo answer. Later, I'll be powered by your backend to give detailed JEE/NEET guidance."
+  }
+
+  const handleAIResponse = (questionText) => {
+    // Placeholder logic – replace with real backend call later
+    const aiResponse = createDemoResponse(questionText)
+
+    setLastAnswer(aiResponse)
+    triggerMentorResponse(aiResponse)
+  }
+
+  useEffect(() => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition
+
+    if (!SpeechRecognition) {
+      console.warn('Speech recognition is not supported in this browser.')
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'en-IN'
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+
+    recognition.onstart = () => {
+      setIsListening(true)
+      setLastAnswer('')
+    }
+
+    recognition.onend = () => {
+      setIsListening(false)
+    }
+
+    recognition.onerror = () => {
+      setIsListening(false)
+    }
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript
+      setLastQuestion(transcript)
+      handleAIResponse(transcript)
+    }
+
+    recognitionRef.current = recognition
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+      recognitionRef.current = null
+    }
+  }, [])
+
+  const handleMicClick = () => {
+    const recognition = recognitionRef.current
+
+    if (!recognition) {
+      alert('Speech recognition is not supported in this browser.')
+      return
+    }
+
+    if (isListening) {
+      recognition.stop()
+    } else {
+      recognition.start()
+    }
+  }
+
+  const handleChatSend = () => {
+    const trimmed = chatInput.trim()
+    if (!trimmed) return
+
+    setChatMessages((prev) => [...prev, { role: 'user', text: trimmed }])
+    setChatInput('')
+
+    const aiResponse = createDemoResponse(trimmed)
+    setChatMessages((prev) => [...prev, { role: 'user', text: trimmed }, { role: 'ai', text: aiResponse }])
+    setLastQuestion(trimmed)
+    setLastAnswer(aiResponse)
+    triggerMentorResponse(aiResponse)
+  }
 
   return (
-    <div className="mentor-page">
+    <div className="app">
       <Header />
-      
-      <main className="mentor-layout">
-        {/* Left Side: 3D Scene */}
-        <div className="canvas-container">
-          <Canvas camera={{ position: [0, 1.2, 2.5], fov: 40 }}>
+      <main className="mentor-main">
+        {/* Reuse the same soft blue glow as on the landing page */}
+        <div className="gradient-overlay" />
+
+        {/* Optional chat panel toggle, similar glassmorphism to landing cards */}
+        <button
+          type="button"
+          className="mentor-chat-toggle"
+          onClick={() => setIsChatOpen((open) => !open)}
+        >
+          {isChatOpen ? 'Close Chat' : 'Open Chat'}
+        </button>
+
+        {/* Centered 3D Mentor model – full body, front view (no crop) */}
+        <div className="mentor-canvas-wrapper">
+          <Canvas camera={{ position: [0, 1.2, 4.5], fov: 35 }}>
             <ambientLight intensity={0.7} />
-            <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} />
+            <spotLight position={[10, 10, 10]} angle={1.8} penumbra={1} />
             <React.Suspense fallback={null}>
-              <MentorModel isSpeaking={isSpeaking} position={[0, -1, 0]} />
+              <MentorModel isSpeaking={isSpeaking} position={[0, -4, 0]} scale={3} />
               <ContactShadows opacity={0.4} scale={5} blur={2} far={4.5} />
               <Environment preset="city" />
             </React.Suspense>
-            <OrbitControls enableZoom={false} minPolarAngle={Math.PI / 3} maxPolarAngle={Math.PI / 2} />
           </Canvas>
         </div>
 
-        {/* Right Side: Chat UI */}
-        <div className="chat-container">
-          <div className="chat-header">
-            <h2>AI Study Mentor</h2>
-            <span className={isSpeaking ? "status speaking" : "status"}>
-              {isSpeaking ? "● Speaking..." : "● Online"}
-            </span>
-          </div>
+        {/* Mic control and subtle status text – no chat sidebar */}
+        <div className="mentor-hud">
+          <button
+            type="button"
+            className={`mic-button ${
+              isListening ? 'listening' : ''
+            } ${isSpeaking ? 'speaking' : ''}`}
+            onClick={handleMicClick}
+          >
+            <span className="mic-icon" />
+          </button>
 
-          <div className="chat-messages" ref={scrollRef}>
-            {messages.map((msg, index) => (
-              <div key={index} className={`message-bubble ${msg.role}`}>
-                {msg.text}
-              </div>
-            ))}
-          </div>
+          <div className="mentor-status">
+            {isListening && <span className="status-pill listening">Listening…</span>}
+            {!isListening && isSpeaking && (
+              <span className="status-pill speaking">Responding…</span>
+            )}
+            {!isListening && !isSpeaking && (
+              <span className="status-pill idle">Tap the mic to ask</span>
+            )}
 
-          <div className="chat-input-area">
-            <input 
-              type="text" 
-              value={input} 
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Ask a question..." 
-            />
-            <button onClick={handleSend}>Send</button>
+            {lastQuestion && (
+              <p className="mentor-caption">
+                You said: <span className="mentor-text">{lastQuestion}</span>
+              </p>
+            )}
+            {lastAnswer && (
+              <p className="mentor-caption">
+                Mentor: <span className="mentor-text">{lastAnswer}</span>
+              </p>
+            )}
           </div>
         </div>
+
+        {isChatOpen && (
+          <div className="mentor-chat-panel">
+            <div className="mentor-chat-header">
+              <span>Chat with Mentor</span>
+              <button
+                type="button"
+                className="mentor-chat-close"
+                onClick={() => setIsChatOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="mentor-chat-messages">
+              {chatMessages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`mentor-chat-bubble ${msg.role}`}
+                >
+                  {msg.text}
+                </div>
+              ))}
+            </div>
+            <div className="mentor-chat-input">
+              <input
+                type="text"
+                placeholder="Type your question..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleChatSend()}
+              />
+              <button type="button" onClick={handleChatSend}>
+                Send
+              </button>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )

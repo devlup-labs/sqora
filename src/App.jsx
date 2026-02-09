@@ -5,10 +5,10 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import Landing from './pages/Landing'
 import AIMentor from './pages/AIMentor'
 import Contests from './pages/Contests'
-import DoubtSolver from './pages/DoubtSolver'
 import Exam from './pages/Exam'
 import Login from './pages/Login'
 import SignUp from './pages/SignUp'
+import Admin from './pages/Admin'
 import './App.css'
 
 function App() {
@@ -28,14 +28,17 @@ function App() {
         {/* Exam page – opened when user clicks "Enter >>" on a contest */}
         <Route path="/exam/:code" element={<Exam />} />
         
-        {/* Doubt Solver page route */}
-        <Route path="/doubt-solver" element={<DoubtSolver />} />
+        {/* Doubt Solver page route - currently reuses AI Mentor UI */}
+        <Route path="/doubt-solver" element={<AIMentor />} />
         
         {/* Login page route */}
         <Route path="/login" element={<Login />} />
         
         {/* Sign Up page route */}
         <Route path="/signup" element={<SignUp />} />
+
+        {/* Admin panel route – protected in Admin component */}
+        <Route path="/admin" element={<Admin />} />
       </Routes>
     </Router>
   )
