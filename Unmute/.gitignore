@@ -1,0 +1,26 @@
+*.egg-info
+*.pyc
+.DS_Store
+
+debug/
+recordings/
+.venv/
+# only ignore voices/ in the root directory
+/voices/
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# Traefik/HTTPS
+certs/
+
+volumes/
+CLAUDE.md
+.claude/settings.local.json

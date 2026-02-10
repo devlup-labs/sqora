@@ -1,0 +1,30 @@
+[
+  {
+    "role": "user",
+    "text": "hello"
+  },
+  {
+    "role": "ai",
+    "text": "Hello! I'm here to help you with your JEE and NEET preparation. Whether it's Physics, Chemistry, or Biology, feel free to ask me any questions you have.\n\nWhat topic are you studying today, or what concept can I clarify for you? \ud83d\ude0a"
+  },
+  {
+    "role": "user",
+    "text": "what is 23+23"
+  },
+  {
+    "role": "user",
+    "text": "hi"
+  },
+  {
+    "role": "user",
+    "text": "hi"
+  },
+  {
+    "role": "user",
+    "text": "hi"
+  },
+  {
+    "role": "assistant",
+    "text": "That's a fun question! \ud83d\ude0a\n\nIn mathematics, **23 + 23** is simply **46**.\n\nThe \"hihihi\" part sounds like you're having a good time, but in standard math problems for exams like JEE or NEET, we only deal with the numbers.\n\nSo, **23 + 23 = 46**.\n\nDo you have a physics, chemistry, or biology question you'd like to tackle next?"
+  }
+]
