@@ -26,5 +26,21 @@
   {
     "role": "assistant",
     "text": "That's a fun question! \ud83d\ude0a\n\nIn mathematics, **23 + 23** is simply **46**.\n\nThe \"hihihi\" part sounds like you're having a good time, but in standard math problems for exams like JEE or NEET, we only deal with the numbers.\n\nSo, **23 + 23 = 46**.\n\nDo you have a physics, chemistry, or biology question you'd like to tackle next?"
+  },
+  {
+    "role": "user",
+    "text": "hay"
+  },
+  {
+    "role": "assistant",
+    "text": "Hello again! I'm ready when you are.\n\nAre you looking to review a specific topic, work through a practice problem, or perhaps understand a concept better for your JEE or NEET preparation?\n\nLet me know what's on your mind!"
+  },
+  {
+    "role": "user",
+    "text": "hello"
+  },
+  {
+    "role": "assistant",
+    "text": "Hello! I'm here and ready to help you learn. \ud83d\ude0a\n\nWhat topic in Physics, Chemistry, or Biology would you like to focus on right now for your JEE or NEET preparation?"
   }
 ]
