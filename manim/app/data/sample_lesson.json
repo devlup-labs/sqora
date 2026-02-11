@@ -1,0 +1,23 @@
+{
+  "exam": "JEE",
+  "subject": "Physics",
+  "topic": "Ohm’s Law",
+  "sections": [
+    {
+      "type": "explanation",
+      "content": "Ohm’s law states that the voltage across a conductor is directly proportional to the current flowing through it."
+    },
+    {
+      "type": "explanation",
+      "content": "The proportionality constant is called resistance."
+    },
+    {
+      "type": "equation",
+      "content": "V = IR"
+    },
+    {
+      "type": "conclusion",
+      "content": "Ohm’s law is valid only for ohmic conductors at constant temperature."
+    }
+  ]
+}

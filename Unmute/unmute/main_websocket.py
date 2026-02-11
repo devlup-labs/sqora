@@ -3,8 +3,10 @@ import base64
 import json
 import logging
 import os
+import uuid
 from functools import cache, partial
 from typing import Annotated
+
 
 import numpy as np
 import requests
@@ -623,6 +625,9 @@ async def general_exception_handler(request: Request, exc: Exception):
 # ---------------------------------------------------------------------------
 
 # Gemini AI client (OpenAI-compatible)
+
+
+
 _gemini_api_key = os.environ.get("GEMINI_API_KEY", "")
 _gemini_client: OpenAI | None = None
 if _gemini_api_key:
@@ -645,15 +650,89 @@ def _load_chat_history():
             return []
     return []
 
-_chat_history = _load_chat_history()
+chat_history = _load_chat_history()
+
+def _extract_topic(text: str) -> str:
+    """
+    Simple dynamic topic detection.
+    Can later upgrade to NLP/LLM classification.
+    """
+
+    lower_text = text.lower()
+
+    if "ohm" in lower_text:
+        return "Ohm's Law"
+    if "maxwell" in lower_text:
+        return "Maxwell's Equations"
+    if "integration" in lower_text:
+        return "Integration"
+    if "chemical" in lower_text:
+        return "Chemical Reaction"
+    if "photosynthesis" in lower_text:
+        return "Photosynthesis"
+
+    # Default fallback
+    return "JEE/NEET Lesson"
+
+
+def _create_animation_job(response_text: str, topic: str = "Lesson"):
+    lesson_data = {
+        "topic": topic,
+        "sections": [
+            {
+                "type": "explanation",
+                "content": response_text
+            }
+        ]
+    }
+
+    lesson_id = str(uuid.uuid4())
+
+    # Navigate to sqora root
+    BASE_DIR = os.path.dirname(
+        os.path.dirname(
+            os.path.dirname(
+                os.path.abspath(__file__)
+            )
+        )
+    )
+
+    manim_jobs_path = os.path.join(BASE_DIR, "manim", "jobs", "incoming")
+    os.makedirs(manim_jobs_path, exist_ok=True)
+
+    file_path = os.path.join(manim_jobs_path, f"{lesson_id}.json")
+
+    with open(file_path, "w") as f:
+        json.dump(lesson_data, f)
+
+    return lesson_id
 
 def _append_to_chat_history(role: str, text: str):
-    _chat_history.append({"role": role, "text": text})
+    global chat_history
+
+    entry = {
+        "role": role,
+        "text": text
+    }
+
+    if role == "assistant":
+        topic = _extract_topic(text)
+
+        lesson_id = _create_animation_job(
+            response_text=text,
+            topic=topic
+        )
+
+        entry["video_id"] = lesson_id
+
+    chat_history.append(entry)
+
     try:
         with open(CHAT_HISTORY_FILE, "w") as f:
-            json.dump(_chat_history, f, indent=2)
+            json.dump(chat_history, f, indent=2)
     except Exception as e:
         logger.error(f"Error saving chat history: {e}")
+
 
 # In-memory stores (demo – no database required)
 _users_db: dict[str, dict] = {
@@ -882,7 +961,7 @@ async def api_chat(body: ChatRequest):
                 },
                 *[
                     {"role": "assistant" if m["role"] == "ai" else m["role"], "content": m["text"]}
-                    for m in _chat_history[-10:]
+                    for m in chat_history[-10:]
                 ],
             ],
         )
@@ -899,7 +978,7 @@ async def api_chat(body: ChatRequest):
 @app.get("/api/chat")
 async def api_chat_history():
     """Return the stored chat history."""
-    return {"history": _chat_history}
+    return {"history": chat_history}
 
 
 # --- Contests ---
