@@ -4,22 +4,63 @@ node_modules/
 .pnp.js
 
 # Testing
-/coverage
+coverage/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
 
 # Production
-/build
-/dist
+build/
+dist/
+out/
 
-# Misc
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
 .DS_Store
+
+# Environment Files
+.env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+.env*.local
 
+# Logs and Data
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+chat_history.json
+recordings/
+debug/
+
+# Docker and Infrastructure
+volumes/
+certs/
+.vercel/
 
 # Vite
 .vite
+
+# Python-specific (additional)
+*.egg-info/
+*.egg/
+
+# TypeScript/Misc
+*.tsbuildinfo
+next-env.d.ts
+.claude/
+CLAUDE.md
+
+
