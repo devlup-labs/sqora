@@ -158,43 +158,58 @@ def generate_manim_code(topic, response_text):
         response_text=cleaned[:3000],  # Limit to avoid token overflow
     )
 
-    try:
-        resp = requests.post(
-            GEMINI_URL,
-            headers={
-                "Authorization": f"Bearer {GEMINI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": GEMINI_MODEL,
-                "reasoning_effort": "low",
-                "messages": [
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0,
-            },
-            timeout=600,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        code = data["choices"][0]["message"]["content"]
+    # Retry logic for handling temporary API failures
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            resp = requests.post(
+                GEMINI_URL,
+                headers={
+                    "Authorization": f"Bearer {GEMINI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": GEMINI_MODEL,
+                    "reasoning_effort": "low",
+                    "messages": [
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0,
+                },
+                timeout=600,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            code = data["choices"][0]["message"]["content"]
 
-        # Strip markdown fences if Gemini wraps the code
-        code = _strip_markdown_fences(code)
+            # Strip markdown fences if Gemini wraps the code
+            code = _strip_markdown_fences(code)
 
-        # Basic validation
-        if "GeneratedScene" not in code or "from manim" not in code:
-            print("WARNING: Generated code looks invalid, using fallback")
+            # Basic validation
+            if "GeneratedScene" not in code or "from manim" not in code:
+                print("WARNING: Generated code looks invalid, using fallback")
+                return _fallback_scene(topic, response_text)
+
+            # Sanitize problematic LaTeX commands
+            code = _sanitize_generated_code(code)
+
+            return code
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 503 and attempt < max_retries - 1:
+                # Service unavailable - retry with exponential backoff
+                wait_time = retry_delay * (2 ** attempt)
+                print(f"Gemini API unavailable (503), retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"Gemini code generation failed: {e}")
+                return _fallback_scene(topic, response_text)
+        except Exception as e:
+            print(f"Gemini code generation failed: {e}")
             return _fallback_scene(topic, response_text)
-
-        # Sanitize problematic LaTeX commands
-        code = _sanitize_generated_code(code)
-
-        return code
-
-    except Exception as e:
-        print(f"Gemini code generation failed: {e}")
-        return _fallback_scene(topic, response_text)
 
 
 def _strip_markdown_fences(code):
@@ -290,6 +305,13 @@ def process_job(job_file):
     lesson_id = job_file.replace(".json", "")
 
     try:
+        # Check if video already exists (cache hit from backend)
+        existing_video = os.path.join(RENDERED, f"{lesson_id}.mp4")
+        if os.path.exists(existing_video):
+            print(f"✓ Video already exists for {job_file}, skipping generation")
+            shutil.move(job_path, os.path.join(DONE, job_file))
+            return
+        
         # Read job data
         with open(job_path) as f:
             job_data = json.load(f)

@@ -638,7 +638,11 @@ if _gemini_api_key:
 else:
     logger.warning("GEMINI_API_KEY is not set. /api/chat will return fallback responses.")
 
+
+
 CHAT_HISTORY_FILE = "chat_history.json"
+VIDEO_CACHE_FILE = "video_cache.json"
+AI_RESPONSE_CACHE_FILE = "ai_response_cache.json"
 
 def _load_chat_history():
     if os.path.exists(CHAT_HISTORY_FILE):
@@ -650,7 +654,55 @@ def _load_chat_history():
             return []
     return []
 
+def _load_video_cache():
+    """Load the video cache that maps normalized prompts to video IDs."""
+    if os.path.exists(VIDEO_CACHE_FILE):
+        try:
+            with open(VIDEO_CACHE_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading video cache: {e}")
+            return {}
+    return {}
+
+def _save_video_cache(cache: dict):
+    """Save the video cache to disk."""
+    try:
+        with open(VIDEO_CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving video cache: {e}")
+
+def _load_ai_response_cache():
+    """Load the AI response cache that maps normalized prompts to AI responses."""
+    if os.path.exists(AI_RESPONSE_CACHE_FILE):
+        try:
+            with open(AI_RESPONSE_CACHE_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading AI response cache: {e}")
+            return {}
+    return {}
+
+def _save_ai_response_cache(cache: dict):
+    """Save the AI response cache to disk."""
+    try:
+        with open(AI_RESPONSE_CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving AI response cache: {e}")
+
+def _normalize_prompt(text: str) -> str:
+    """Normalize a prompt for cache lookup by removing punctuation, symbols, extra whitespace, and lowercasing."""
+    import re
+    # Remove all non-alphanumeric characters except spaces
+    text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
+    # Lowercase and collapse multiple spaces
+    return " ".join(text.lower().strip().split())
+
 chat_history = _load_chat_history()
+video_cache = _load_video_cache()
+ai_response_cache = _load_ai_response_cache()
 
 def _extract_topic(text: str) -> str:
     """
@@ -676,6 +728,17 @@ def _extract_topic(text: str) -> str:
 
 
 def _create_animation_job(response_text: str, topic: str = "Lesson"):
+    """Create a manim animation job, or return cached video ID if prompt was seen before."""
+    global video_cache
+    
+    # Check cache first
+    normalized_prompt = _normalize_prompt(response_text)
+    if normalized_prompt in video_cache:
+        cached_video_id = video_cache[normalized_prompt]
+        logger.info(f"Cache hit! Reusing video {cached_video_id} for prompt: {response_text[:50]}...")
+        return cached_video_id
+    
+    # Cache miss - create new job
     job_data = {
         "topic": topic,
         "response_text": response_text,
@@ -699,7 +762,12 @@ def _create_animation_job(response_text: str, topic: str = "Lesson"):
 
     with open(file_path, "w") as f:
         json.dump(job_data, f)
-
+    
+    # Add to cache
+    video_cache[normalized_prompt] = lesson_id
+    _save_video_cache(video_cache)
+    
+    logger.info(f"Cache miss. Created new job {lesson_id} for prompt: {response_text[:50]}...")
     return lesson_id
 
 def _append_to_chat_history(role: str, text: str, video_id: str | None = None):
@@ -935,9 +1003,34 @@ async def api_login(body: AuthLogin):
 @app.post("/api/chat")
 async def api_chat(body: ChatRequest):
     """Return an AI mentor response powered by Gemini."""
+    global ai_response_cache
+    
     if not _gemini_client:
         return {"reply": "AI is not configured. Please set the GEMINI_API_KEY environment variable."}
 
+    # Normalize the user's question for cache lookup
+    normalized_question = _normalize_prompt(body.message)
+    
+    # Check AI response cache first
+    if normalized_question in ai_response_cache:
+        cached_reply = ai_response_cache[normalized_question]
+        logger.info(f"AI response cache hit for: {body.message[:50]}...")
+        
+        # Still need to create manim job and log to history
+        topic = _extract_topic(body.message)
+        lesson_id = _create_animation_job(
+            response_text=body.message,
+            topic=topic
+        )
+        
+        _append_to_chat_history("user", body.message, video_id=lesson_id)
+        _append_to_chat_history("assistant", cached_reply)
+        
+        return {"reply": cached_reply, "video_id": lesson_id}
+    
+    # Cache miss - generate new response
+    logger.info(f"AI response cache miss for: {body.message[:50]}...")
+    
     # Extract topic from user's question for manim generation
     topic = _extract_topic(body.message)
     
@@ -972,6 +1065,11 @@ async def api_chat(body: ChatRequest):
             temperature=0,
         )
         reply = response.choices[0].message.content
+        
+        # Save to AI response cache
+        ai_response_cache[normalized_question] = reply
+        _save_ai_response_cache(ai_response_cache)
+        
         # Log AI response (no video_id needed for assistant messages)
         _append_to_chat_history("assistant", reply)
     except Exception as e:
