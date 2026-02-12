@@ -13,32 +13,19 @@ import './aimentor.css'
 // Strip markdown, LaTeX, and symbols for clean text-to-speech
 function stripForTTS(text) {
   return text
-    // Remove LaTeX display blocks: $$...$$
     .replace(/\$\$[\s\S]*?\$\$/g, ' math expression ')
-    // Remove inline LaTeX: $...$
     .replace(/\$[^$]+?\$/g, ' math expression ')
-    // Remove LaTeX commands like \frac{}{}, \sqrt{}, etc.
     .replace(/\\[a-zA-Z]+\{[^}]*\}/g, '')
-    // Remove code blocks: ```...```
     .replace(/```[\s\S]*?```/g, ' code block ')
-    // Remove inline code: `...`
     .replace(/`[^`]+`/g, '')
-    // Remove markdown images: ![alt](url)
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    // Remove markdown links but keep text: [text](url)
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    // Remove headers: # ## ### etc.
     .replace(/^#{1,6}\s+/gm, '')
-    // Remove bold/italic markers: ** __ * _
     .replace(/[*_]{1,3}/g, '')
-    // Remove horizontal rules: --- *** ___
     .replace(/^[-*_]{3,}$/gm, '')
-    // Remove bullet/list markers
     .replace(/^\s*[-*+]\s+/gm, '')
     .replace(/^\s*\d+\.\s+/gm, '')
-    // Remove remaining special symbols
     .replace(/[~|>]/g, '')
-    // Collapse multiple spaces/newlines
     .replace(/\n{2,}/g, '. ')
     .replace(/\n/g, ' ')
     .replace(/\s{2,}/g, ' ')
@@ -63,22 +50,65 @@ function AIMentor() {
   ])
   const recognitionRef = useRef(null)
 
+  // --- Video panel state ---
+  const [activeVideoId, setActiveVideoId] = useState(null)
+  const [videoReady, setVideoReady] = useState(false)
+  const [videoPolling, setVideoPolling] = useState(false)
+  const videoRef = useRef(null)
+  const pollingRef = useRef(null)
+
+  // Poll for video readiness when activeVideoId changes
+  useEffect(() => {
+    if (!activeVideoId) {
+      setVideoReady(false)
+      setVideoPolling(false)
+      return
+    }
+
+    setVideoReady(false)
+    setVideoPolling(true)
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/videos/${activeVideoId}/status`)
+        const data = await res.json()
+        if (data.ready) {
+          setVideoReady(true)
+          setVideoPolling(false)
+          clearInterval(pollingRef.current)
+        }
+      } catch (err) {
+        console.error('Video status poll error:', err)
+      }
+    }
+
+    poll() // check immediately
+    pollingRef.current = setInterval(poll, 3000)
+
+    return () => clearInterval(pollingRef.current)
+  }, [activeVideoId])
+
+  // Auto-play video when ready
+  useEffect(() => {
+    if (videoReady && videoRef.current) {
+      videoRef.current.load()
+      videoRef.current.play().catch(() => { })
+    }
+  }, [videoReady])
+
   const triggerMentorResponse = (text) => {
-    // Start Animation
     setIsSpeaking(true)
 
     if (voiceEnabled && 'speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(stripForTTS(text))
-      utterance.onend = () => setIsSpeaking(false) // Stop animation when done talking
+      utterance.onend = () => setIsSpeaking(false)
       window.speechSynthesis.speak(utterance)
     } else {
-      // Fallback: stop animation after a short delay
       setTimeout(() => setIsSpeaking(false), 3000)
     }
   }
 
   const handleAIResponse = async (questionText) => {
-    // Add user question to chat when speaking
     setChatMessages((prev) => [...prev, { role: 'user', text: questionText }])
 
     try {
@@ -90,9 +120,7 @@ function AIMentor() {
       const data = await res.json()
       const aiResponse = data.reply || 'Sorry, something went wrong.'
 
-      // Add AI response to chat
       setChatMessages((prev) => [...prev, { role: 'assistant', text: aiResponse }])
-
       setLastAnswer(aiResponse)
       triggerMentorResponse(aiResponse)
     } catch (err) {
@@ -148,13 +176,17 @@ function AIMentor() {
   }, [])
 
   useEffect(() => {
-    // Fetch existing chat history from backend
     const fetchHistory = async () => {
       try {
         const res = await fetch('/api/chat')
         const data = await res.json()
         if (data.history && data.history.length > 0) {
           setChatMessages(data.history)
+          // Set the latest video if available
+          const lastWithVideo = [...data.history].reverse().find((m) => m.video_id)
+          if (lastWithVideo) {
+            setActiveVideoId(lastWithVideo.video_id)
+          }
         }
       } catch (err) {
         console.error('Failed to fetch chat history:', err)
@@ -164,7 +196,6 @@ function AIMentor() {
   }, [])
 
   const handleMicClick = () => {
-    // If speaking, stop talking immediately
     if (isSpeaking) {
       window.speechSynthesis.cancel()
       setIsSpeaking(false)
@@ -210,11 +241,104 @@ function AIMentor() {
     }
   }
 
+  // When chat messages update, auto-select the latest video
+  useEffect(() => {
+    const lastWithVideo = [...chatMessages].reverse().find((m) => m.video_id)
+    if (lastWithVideo && lastWithVideo.video_id !== activeVideoId) {
+      setActiveVideoId(lastWithVideo.video_id)
+    }
+  }, [chatMessages])
+
   return (
     <div className="app">
       <Header />
       <main className="mentor-main">
-        {/* Optional chat panel toggle, similar glassmorphism to landing cards */}
+        {/* ========== LEFT: VIDEO PANEL ========== */}
+        <div className="mentor-video-panel">
+          <div className="mentor-video-header">
+            <span className="mentor-video-header-dot" />
+            <span>Lesson Animation</span>
+          </div>
+          <div className="mentor-video-body">
+            {!activeVideoId && (
+              <div className="mentor-video-empty">
+                <div className="mentor-video-empty-icon">▶</div>
+                <p>Ask a question to generate an animated lesson</p>
+              </div>
+            )}
+            {activeVideoId && !videoReady && videoPolling && (
+              <div className="mentor-video-empty">
+                <div className="mentor-video-spinner" />
+                <p>Rendering animation…</p>
+              </div>
+            )}
+            {activeVideoId && videoReady && (
+              <video
+                ref={videoRef}
+                className="mentor-video-player"
+                controls
+                autoPlay
+                src={`/api/videos/${activeVideoId}`}
+              />
+            )}
+          </div>
+
+          {/* List of past videos from chat */}
+          <div className="mentor-video-list">
+            {chatMessages
+              .filter((m) => m.video_id)
+              .map((m, i) => (
+                <button
+                  key={m.video_id}
+                  className={`mentor-video-list-item ${m.video_id === activeVideoId ? 'active' : ''}`}
+                  onClick={() => setActiveVideoId(m.video_id)}
+                >
+                  <span className="mentor-video-list-num">{i + 1}</span>
+                  <span className="mentor-video-list-label">
+                    {m.text?.substring(0, 60)}…
+                  </span>
+                </button>
+              ))}
+          </div>
+        </div>
+
+        {/* ========== CENTER: 3D MODEL & HUD ========== */}
+        <div className="mentor-center-area">
+          <div className="mentor-canvas-wrapper">
+            <Canvas camera={{ position: [0, 1.2, 4.5], fov: 35 }}>
+              <ambientLight intensity={0.7} />
+              <spotLight position={[10, 10, 10]} angle={1.8} penumbra={1} />
+              <React.Suspense fallback={null}>
+                <MentorModel isSpeaking={isSpeaking} position={[0, -4, 0]} scale={3} />
+                <ContactShadows opacity={0.4} scale={5} blur={2} far={4.5} />
+                <Environment preset="city" />
+              </React.Suspense>
+            </Canvas>
+          </div>
+
+          <div className="mentor-hud">
+            <button
+              type="button"
+              className={`mic-button ${isListening ? 'listening' : ''
+                } ${isSpeaking ? 'speaking' : ''}`}
+              onClick={handleMicClick}
+            >
+              <span className="mic-icon" />
+            </button>
+
+            <div className="mentor-status">
+              {isListening && <span className="status-pill listening">Listening…</span>}
+              {!isListening && isSpeaking && (
+                <span className="status-pill speaking">Responding…</span>
+              )}
+              {!isListening && !isSpeaking && (
+                <span className="status-pill idle">Tap the mic to ask</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Chat toggle */}
         <button
           type="button"
           className="mentor-chat-toggle"
@@ -222,41 +346,6 @@ function AIMentor() {
         >
           {isChatOpen ? 'Close Chat' : 'Open Chat'}
         </button>
-
-        {/* Centered 3D Mentor model – full body, front view (no crop) */}
-        <div className="mentor-canvas-wrapper">
-          <Canvas camera={{ position: [0, 1.2, 4.5], fov: 35 }}>
-            <ambientLight intensity={0.7} />
-            <spotLight position={[10, 10, 10]} angle={1.8} penumbra={1} />
-            <React.Suspense fallback={null}>
-              <MentorModel isSpeaking={isSpeaking} position={[0, -4, 0]} scale={3} />
-              <ContactShadows opacity={0.4} scale={5} blur={2} far={4.5} />
-              <Environment preset="city" />
-            </React.Suspense>
-          </Canvas>
-        </div>
-
-        {/* Mic control and subtle status text – no chat sidebar */}
-        <div className="mentor-hud">
-          <button
-            type="button"
-            className={`mic-button ${isListening ? 'listening' : ''
-              } ${isSpeaking ? 'speaking' : ''}`}
-            onClick={handleMicClick}
-          >
-            <span className="mic-icon" />
-          </button>
-
-          <div className="mentor-status">
-            {isListening && <span className="status-pill listening">Listening…</span>}
-            {!isListening && isSpeaking && (
-              <span className="status-pill speaking">Responding…</span>
-            )}
-            {!isListening && !isSpeaking && (
-              <span className="status-pill idle">Tap the mic to ask</span>
-            )}
-          </div>
-        </div>
 
         {isChatOpen && (
           <div className="mentor-chat-panel">
@@ -277,9 +366,19 @@ function AIMentor() {
                   className={`mentor-chat-bubble ${msg.role}`}
                 >
                   {msg.role === 'assistant' ? (
-                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                      {msg.text}
-                    </ReactMarkdown>
+                    <>
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                        {msg.text}
+                      </ReactMarkdown>
+                      {msg.video_id && (
+                        <button
+                          className="mentor-video-inline-btn"
+                          onClick={() => setActiveVideoId(msg.video_id)}
+                        >
+                          ▶ Watch Animation
+                        </button>
+                      )}
+                    </>
                   ) : (
                     msg.text
                   )}

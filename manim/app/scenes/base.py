@@ -13,11 +13,12 @@ class TeacherScene(Scene):
     def show_title(self, text):
         title = Text(
             text,
-            font="Inter",
             font_size=44,
             weight=BOLD,
             color=BLUE_C
         )
+        # Prevent title from going off-screen
+        title.width = min(title.width, config.frame_width - 2)
         title.to_edge(UP).shift(DOWN * 0.3)
 
         underline = Line(
@@ -37,11 +38,10 @@ class TeacherScene(Scene):
 
         explanation = Text(
             text,
-            font="Inter",
-            font_size=26,
-            line_spacing=1.0,
-            width=11,
-            color=GREY_A
+            font_size=28,
+            line_spacing=1.2,
+            color=GREY_A,
+            width=config.frame_width - 2,
         )
 
         # Explanation safe zone (BOTTOM)

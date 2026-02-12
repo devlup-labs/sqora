@@ -23,7 +23,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.websockets import WebSocketState
 from fastrtc import AdditionalOutputs, CloseStream, audio_to_float32
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -676,14 +676,9 @@ def _extract_topic(text: str) -> str:
 
 
 def _create_animation_job(response_text: str, topic: str = "Lesson"):
-    lesson_data = {
+    job_data = {
         "topic": topic,
-        "sections": [
-            {
-                "type": "explanation",
-                "content": response_text
-            }
-        ]
+        "response_text": response_text,
     }
 
     lesson_id = str(uuid.uuid4())
@@ -703,7 +698,7 @@ def _create_animation_job(response_text: str, topic: str = "Lesson"):
     file_path = os.path.join(manim_jobs_path, f"{lesson_id}.json")
 
     with open(file_path, "w") as f:
-        json.dump(lesson_data, f)
+        json.dump(job_data, f)
 
     return lesson_id
 
@@ -949,7 +944,7 @@ async def api_chat(body: ChatRequest):
     try:
         response = await asyncio.to_thread(
             _gemini_client.chat.completions.create,
-            model="gemini-flash-lite-latest",
+            model="gemini-flash-latest",
             messages=[
                 {
                     "role": "system",
@@ -979,6 +974,32 @@ async def api_chat(body: ChatRequest):
 async def api_chat_history():
     """Return the stored chat history."""
     return {"history": chat_history}
+
+
+# --- Videos (manim rendered) ---
+
+_RENDERED_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "manim", "media", "rendered",
+)
+
+
+@app.get("/api/videos/{video_id}/status")
+async def api_video_status(video_id: str):
+    """Check if a rendered video is ready."""
+    path = os.path.join(_RENDERED_DIR, f"{video_id}.mp4")
+    ready = os.path.exists(path)
+    return {"ready": ready}
+
+
+@app.get("/api/videos/{video_id}")
+async def api_video(video_id: str):
+    """Serve a rendered manim video."""
+    path = os.path.join(_RENDERED_DIR, f"{video_id}.mp4")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Video not found or still rendering.")
+    return FileResponse(path, media_type="video/mp4")
+
 
 
 # --- Contests ---

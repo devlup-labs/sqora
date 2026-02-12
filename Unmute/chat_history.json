@@ -1,46 +1,20 @@
 [
   {
     "role": "user",
-    "text": "hello"
-  },
-  {
-    "role": "ai",
-    "text": "Hello! I'm here to help you with your JEE and NEET preparation. Whether it's Physics, Chemistry, or Biology, feel free to ask me any questions you have.\n\nWhat topic are you studying today, or what concept can I clarify for you? \ud83d\ude0a"
-  },
-  {
-    "role": "user",
-    "text": "what is 23+23"
-  },
-  {
-    "role": "user",
-    "text": "hi"
-  },
-  {
-    "role": "user",
-    "text": "hi"
-  },
-  {
-    "role": "user",
-    "text": "hi"
+    "text": "what is Newton's third law"
   },
   {
     "role": "assistant",
-    "text": "That's a fun question! \ud83d\ude0a\n\nIn mathematics, **23 + 23** is simply **46**.\n\nThe \"hihihi\" part sounds like you're having a good time, but in standard math problems for exams like JEE or NEET, we only deal with the numbers.\n\nSo, **23 + 23 = 46**.\n\nDo you have a physics, chemistry, or biology question you'd like to tackle next?"
+    "text": "Hello! Welcome to **SQORA**. I'm your tutor, and I'll help you break down Newton's Third Law in a way that\u2019s super easy to remember for your JEE/NEET prep.\n\n### **What is Newton's Third Law?**\n\nIn simple words: **\"To every action, there is always an equal and opposite reaction.\"**\n\nThis means forces always exist in pairs. If Object A exerts a force on Object B, then Object B exerts a force of the same magnitude back on Object A, but in the opposite direction.\n\n---\n\n### **Key Points (Crucial for JEE/NEET)**\n\nTo solve physics problems correctly, you must remember these three \"golden rules\" about the Third Law:\n\n1.  **Different Bodies:** Action and Reaction **never** act on the same body. If they did, the net force would always be zero, and nothing would ever move!\n2.  **Simultaneous:** There is no time lag. The moment you push a wall, the wall pushes you back instantly.\n3.  **Same Nature:** If the action is a gravitational force, the reaction is also a gravitational force. If the action is a contact force (like Normal force), the reaction is also a contact force.\n\n---\n\n### **Examples from Daily Life**\n\n*   **Walking:** When you walk, your foot pushes the ground **backward** (Action). In return, the ground pushes your foot **forward** (Reaction), which allows you to move.\n*   **Recoil of a Gun:** When a bullet is fired forward (Action), the gun pushes back on the shoulder of the shooter (Reaction).\n*   **Swimming:** A swimmer pushes the water backward with their hands (Action), and the water pushes the swimmer forward (Reaction).\n\n---\n\n### **Mathematical Representation**\n\nIf $\\vec{F}_{AB}$ is the force exerted by body **A** on body **B**, and $\\vec{F}_{BA}$ is the force exerted by body **B** on body **A**, then:\n\n$$\\vec{F}_{AB} = -\\vec{F}_{BA}$$\n\n*(The negative sign indicates the opposite direction.)*\n\n---\n\n### **\ud83d\udca1 Pro-Tip for Competitive Exams:**\nIn **Free Body Diagrams (FBD)**, many students confuse Newton's Third Law with Equilibrium. \n*   **Equilibrium:** Two forces act on the **same** object and cancel out (Net Force = 0).\n*   **Third Law:** Two forces act on **different** objects and can never cancel each other out.\n\n**Example:** A book resting on a table. The Weight ($mg$) and Normal force ($N$) are **NOT** an action-reaction pair because they both act on the book. The reaction to the book's weight is the book pulling the Earth upward!\n\nHope this clears it up! Do you have any specific problems or FBDs you'd like to discuss?",
+    "video_id": "2f1efff1-a48c-401a-a255-de4127ddce8d"
   },
   {
     "role": "user",
-    "text": "hay"
+    "text": "what is diffraction"
   },
   {
     "role": "assistant",
-    "text": "Hello again! I'm ready when you are.\n\nAre you looking to review a specific topic, work through a practice problem, or perhaps understand a concept better for your JEE or NEET preparation?\n\nLet me know what's on your mind!"
-  },
-  {
-    "role": "user",
-    "text": "hello"
-  },
-  {
-    "role": "assistant",
-    "text": "Hello! I'm here and ready to help you learn. \ud83d\ude0a\n\nWhat topic in Physics, Chemistry, or Biology would you like to focus on right now for your JEE or NEET preparation?"
+    "text": "Great to see you're diving into **Wave Optics**! This is a very important topic for both JEE and NEET. Let's break down **Diffraction** in simple terms.\n\n### **What is Diffraction?**\n\nIn simple words, **Diffraction is the bending of waves around the corners of an obstacle or an opening.**\n\nWhen a light wave encounters a sharp edge or a small slit, it doesn't just pass straight through. Instead, it \"bends\" into the region of the geometrical shadow. This proves that light behaves like a **wave**.\n\n---\n\n### **The \"Golden Condition\" for Diffraction**\n\nFor diffraction to be noticeable, there is one major rule:\n> **The size of the obstacle or slit ($a$) must be comparable to the wavelength of the light ($\\lambda$).**\n\n*   **Why we don\u2019t see light bending around buildings:** Light has a very small wavelength ($\\approx 10^{-7}$ m), while buildings are huge. So, light mostly travels in straight lines for us.\n*   **Why we can hear someone around a corner:** Sound waves have long wavelengths (cm to meters), which are comparable to doors and windows. Thus, sound diffracts easily!\n\n---\n\n### **Single Slit Diffraction (The JEE/NEET Focus)**\n\nWhen light passes through a single narrow slit of width **$a$**, it forms a pattern on a screen consisting of a bright central band and alternating dark and bright bands on either side.\n\n1.  **Central Maximum:** The center of the pattern is the brightest and widest part.\n2.  **Minima (Dark Fringes):** These occur when the path difference satisfies the condition:\n    $$a \\sin \\theta = n\\lambda$$\n    *(Where $n = 1, 2, 3...$)*\n3.  **Secondary Maxima (Bright Fringes):** These are much dimmer than the central one and occur roughly halfway between the minima.\n\n---\n\n### **Types of Diffraction**\n\nIn your syllabus, you will come across two names:\n1.  **Fresnel Diffraction:** The source of light and the screen are at a **finite (limited)** distance from the obstacle. (e.g., light hitting a coin).\n2.  **Fraunhofer Diffraction:** The source and screen are effectively at **infinite** distance (we use lenses to make rays parallel). This is the one we usually study mathematically in JEE/NEET.\n\n---\n\n### **Real-Life Examples**\n*   **CDs/DVDs:** The \"rainbow\" colors you see on the surface of a CD are due to diffraction from the tiny tracks on the disc.\n*   **Shadows:** If you look closely at the shadow of an object, the edges are never perfectly sharp\u2014they are slightly blurred due to diffraction.\n*   **Silver lining:** The bright fringe seen around clouds when the sun is behind them.\n\n---\n\n### **\ud83d\udca1 SQORA Pro-Tip: Diffraction vs. Interference**\n\nStudents often get confused between these two. Remember:\n*   **Interference** is the superposition of waves from **two different wavefronts** (like two slits in YDSE).\n*   **Diffraction** is the superposition of wavelets coming from **different parts of the same wavefront** (like a single slit).\n\n**Quick Formula for JEE/NEET:**\nThe width of the **Central Maximum** in a single-slit experiment is:\n$$W = \\frac{2\\lambda D}{a}$$\n*(Where $D$ is the distance to the screen and $a$ is the slit width.)*\n\nDoes that help you visualize how light bends? Let me know if you want to try a numerical problem on this!",
+    "video_id": "2deab865-4f09-4165-8ca1-4258c37031c2"
   }
 ]
