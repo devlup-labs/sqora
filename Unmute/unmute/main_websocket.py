@@ -702,7 +702,14 @@ def _create_animation_job(response_text: str, topic: str = "Lesson"):
 
     return lesson_id
 
-def _append_to_chat_history(role: str, text: str):
+def _append_to_chat_history(role: str, text: str, video_id: str | None = None):
+    """Append a message to chat history.
+    
+    Args:
+        role: Either "user" or "assistant"
+        text: The message text
+        video_id: Optional video ID to attach (for user messages that trigger manim)
+    """
     global chat_history
 
     entry = {
@@ -710,15 +717,8 @@ def _append_to_chat_history(role: str, text: str):
         "text": text
     }
 
-    if role == "assistant":
-        topic = _extract_topic(text)
-
-        lesson_id = _create_animation_job(
-            response_text=text,
-            topic=topic
-        )
-
-        entry["video_id"] = lesson_id
+    if video_id:
+        entry["video_id"] = video_id
 
     chat_history.append(entry)
 
@@ -938,13 +938,23 @@ async def api_chat(body: ChatRequest):
     if not _gemini_client:
         return {"reply": "AI is not configured. Please set the GEMINI_API_KEY environment variable."}
 
-    # Log user message
-    _append_to_chat_history("user", body.message)
+    # Extract topic from user's question for manim generation
+    topic = _extract_topic(body.message)
+    
+    # Create manim job based on user's question (parallel with AI response)
+    lesson_id = _create_animation_job(
+        response_text=body.message,
+        topic=topic
+    )
+    
+    # Log user message with video_id attached
+    _append_to_chat_history("user", body.message, video_id=lesson_id)
 
     try:
         response = await asyncio.to_thread(
             _gemini_client.chat.completions.create,
             model="gemini-flash-latest",
+            reasoning_effort="low",
             messages=[
                 {
                     "role": "system",
@@ -959,15 +969,16 @@ async def api_chat(body: ChatRequest):
                     for m in chat_history[-10:]
                 ],
             ],
+            temperature=0,
         )
         reply = response.choices[0].message.content
-        # Log AI response
+        # Log AI response (no video_id needed for assistant messages)
         _append_to_chat_history("assistant", reply)
     except Exception as e:
         logger.error("Gemini chat error: %s", e)
         reply = "Sorry, I couldn't process your question right now. Please try again."
 
-    return {"reply": reply}
+    return {"reply": reply, "video_id": lesson_id}
 
 
 @app.get("/api/chat")

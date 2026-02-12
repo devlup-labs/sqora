@@ -112,7 +112,7 @@ class MistralStream:
         event_stream = await self.mistral.chat.stream_async(
             model="mistral-large-latest",
             messages=cast(Any, messages),  # It's too annoying to type this properly
-            temperature=1.0,
+            temperature=0,
         )
 
         async for event in event_stream:
@@ -149,7 +149,7 @@ class VLLMStream:
     def __init__(
         self,
         client: AsyncOpenAI,
-        temperature: float = 1.0,
+        temperature: float = 0,
     ):
         """
         If `model` is None, it will look at the available models, and if there is only

@@ -62,11 +62,14 @@ Convert the following educational content into a **single, self-contained Manim 
 14. Output ONLY valid Python code. No markdown fences, no comments outside the code, no explanations.
 15. Structure each section as: Title → Key point (1-2 short lines) → Equation (if any) → Clear screen → Next section.
 16. NEVER put a long paragraph in a single `Text()`. Break content into bite-sized pieces across multiple frames.
+17. **CRITICAL**: Do NOT add ANY explanatory text, comments, or [instruction] tags after the code ends. Output ONLY the Python code itself.
 
 ## Topic: {topic}
 
 ## Content to animate:
 {response_text}
+
+REMEMBER: Output ONLY the Python code. No explanations before or after. No [instruction] tags. Just pure Python code.
 """
 
 
@@ -164,10 +167,11 @@ def generate_manim_code(topic, response_text):
             },
             json={
                 "model": GEMINI_MODEL,
+                "reasoning_effort": "low",
                 "messages": [
                     {"role": "user", "content": prompt},
                 ],
-                "temperature": 0.3,
+                "temperature": 0,
             },
             timeout=600,
         )
@@ -194,8 +198,26 @@ def generate_manim_code(topic, response_text):
 
 
 def _strip_markdown_fences(code):
-    """Remove ```python ... ``` wrappers and any stray ``` lines."""
+    """Remove ```python ... ``` wrappers, instruction tags, and explanatory text."""
     code = code.strip()
+    
+    # Remove [instruction] tags and everything after them
+    # These are sometimes added by Gemini as explanatory comments
+    if '[instruction]' in code.lower():
+        # Find the first occurrence (case-insensitive)
+        match = re.search(r'\[instruction\]', code, re.IGNORECASE)
+        if match:
+            code = code[:match.start()].rstrip()
+    
+    # Also remove common trailing explanation patterns
+    # e.g., "This code does...", "The above code...", "Note: ..."
+    code = re.sub(
+        r'\n\s*(This code|The above code|The provided code|Note:|Explanation:).*$',
+        '',
+        code,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+    
     lines = code.split("\n")
     # Remove all lines that are just ``` or ```python or ```py etc.
     lines = [l for l in lines if not re.match(r'^```\w*\s*$', l.strip())]

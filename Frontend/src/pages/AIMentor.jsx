@@ -109,8 +109,6 @@ function AIMentor() {
   }
 
   const handleAIResponse = async (questionText) => {
-    setChatMessages((prev) => [...prev, { role: 'user', text: questionText }])
-
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -119,14 +117,28 @@ function AIMentor() {
       })
       const data = await res.json()
       const aiResponse = data.reply || 'Sorry, something went wrong.'
+      const videoId = data.video_id
 
+      // Add user message with video_id (for parallel manim generation)
+      setChatMessages((prev) => [...prev, { role: 'user', text: questionText, video_id: videoId }])
+
+      // Add AI response
       setChatMessages((prev) => [...prev, { role: 'assistant', text: aiResponse }])
       setLastAnswer(aiResponse)
       triggerMentorResponse(aiResponse)
+
+      // Set active video to the newly created one
+      if (videoId) {
+        setActiveVideoId(videoId)
+      }
     } catch (err) {
       console.error('Chat error:', err)
       const fallback = 'Could not reach the server.'
-      setChatMessages((prev) => [...prev, { role: 'assistant', text: fallback }])
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'user', text: questionText },
+        { role: 'assistant', text: fallback }
+      ])
       setLastAnswer(fallback)
       triggerMentorResponse(fallback)
     }
@@ -220,7 +232,6 @@ function AIMentor() {
     const trimmed = chatInput.trim()
     if (!trimmed) return
 
-    setChatMessages((prev) => [...prev, { role: 'user', text: trimmed }])
     setChatInput('')
 
     try {
@@ -231,13 +242,28 @@ function AIMentor() {
       })
       const data = await res.json()
       const aiResponse = data.reply || 'Sorry, something went wrong.'
+      const videoId = data.video_id
+
+      // Add user message with video_id (for parallel manim generation)
+      setChatMessages((prev) => [...prev, { role: 'user', text: trimmed, video_id: videoId }])
+
+      // Add AI response
       setChatMessages((prev) => [...prev, { role: 'assistant', text: aiResponse }])
       setLastQuestion(trimmed)
       setLastAnswer(aiResponse)
       triggerMentorResponse(aiResponse)
+
+      // Set active video to the newly created one
+      if (videoId) {
+        setActiveVideoId(videoId)
+      }
     } catch (err) {
       console.error('Chat error:', err)
-      setChatMessages((prev) => [...prev, { role: 'assistant', text: 'Could not reach the server.' }])
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'user', text: trimmed },
+        { role: 'assistant', text: 'Could not reach the server.' }
+      ])
     }
   }
 
@@ -370,6 +396,10 @@ function AIMentor() {
                       <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                         {msg.text}
                       </ReactMarkdown>
+                    </>
+                  ) : (
+                    <>
+                      {msg.text}
                       {msg.video_id && (
                         <button
                           className="mentor-video-inline-btn"
@@ -379,8 +409,6 @@ function AIMentor() {
                         </button>
                       )}
                     </>
-                  ) : (
-                    msg.text
                   )}
                 </div>
               ))}
