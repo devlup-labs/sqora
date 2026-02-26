@@ -23,6 +23,8 @@ function Exam() {
   const [paused, setPaused] = useState(false)
   const [config, setConfig] = useState(fallbackConfig)
   const [questions, setQuestions] = useState([])
+  const [isSubmitted, setIsSubmitted] = useState(false)
+  const [result, setResult] = useState(null)
 
   // Fetch exam data from backend
   useEffect(() => {
@@ -61,6 +63,93 @@ function Exam() {
   const handleOptionSelect = (opt) => {
     setUserAnswers(prev => ({ ...prev, [currentGlobalQ]: opt }));
     setStatus(prev => ({ ...prev, [currentGlobalQ]: 'attempted' }));
+  }
+
+  const handleSubmit = () => {
+    let score = 0;
+    let correctCount = 0;
+    let incorrectCount = 0;
+    let unattemptedCount = 0;
+
+    questions.forEach((q) => {
+      const ans = userAnswers[q.number];
+      let posMark = 4;
+      let negMark = 1;
+
+      if (q.scoring) {
+        const match = q.scoring.match(/\+(\d+)\s*\/\s*-(\d+)/);
+        if (match) {
+          posMark = parseInt(match[1]);
+          negMark = parseInt(match[2]);
+        }
+      }
+
+      if (!ans) {
+        unattemptedCount++;
+      } else if (ans === q.correct) {
+        correctCount++;
+        score += posMark;
+      } else {
+        incorrectCount++;
+        score -= negMark;
+      }
+    });
+
+    setResult({
+      score,
+      correctCount,
+      incorrectCount,
+      unattemptedCount,
+      total: questions.length
+    });
+    setIsSubmitted(true);
+  }
+
+  if (isSubmitted && result) {
+    return (
+      <div className={`exam-page ${darkMode ? 'exam-dark' : 'exam-light'}`}>
+        <header className="exam-header">
+          <div className="exam-title-text" style={{ paddingLeft: '20px' }}>Exam Result</div>
+          <div className="exam-header-actions">
+            <button className="header-icon-btn theme-toggle" onClick={() => setDarkMode(!darkMode)}>
+              {darkMode ? '☀️' : '🌙'}
+            </button>
+          </div>
+        </header>
+
+        <div className="exam-container-main" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem' }}>
+          <div style={{ backgroundColor: darkMode ? '#1e293b' : '#ffffff', padding: '3rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center', width: '100%', maxWidth: '600px', margin: 'auto', color: darkMode ? '#f8fafc' : '#0f172a' }}>
+            <h2 style={{ fontSize: '2rem', marginBottom: '1.5rem' }}>Submission Successful!</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', fontSize: '1.2rem', margin: '2rem 0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '1.2rem', background: darkMode ? '#334155' : '#f1f5f9', borderRadius: '8px' }}>
+                <span>Total Score:</span>
+                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>{result.score} / {result.total * 4}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '1.2rem', background: darkMode ? '#334155' : '#f1f5f9', borderRadius: '8px' }}>
+                <span>Correct Answers:</span>
+                <span style={{ fontWeight: 'bold', color: '#22c55e' }}>{result.correctCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '1.2rem', background: darkMode ? '#334155' : '#f1f5f9', borderRadius: '8px' }}>
+                <span>Incorrect Answers:</span>
+                <span style={{ fontWeight: 'bold', color: '#ef4444' }}>{result.incorrectCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '1.2rem', background: darkMode ? '#334155' : '#f1f5f9', borderRadius: '8px' }}>
+                <span>Unattempted:</span>
+                <span style={{ fontWeight: 'bold', color: '#94a3b8' }}>{result.unattemptedCount}</span>
+              </div>
+            </div>
+
+            <button
+              className="full-submit-btn"
+              onClick={() => navigate('/contests')}
+              style={{ width: '100%', padding: '1rem', fontSize: '1.1rem', marginTop: '1rem' }}
+            >
+              Back to Contests
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -159,7 +248,7 @@ function Exam() {
               ))}
             </div>
             <div className="sidebar-fixed-footer">
-              <button className="full-submit-btn" onClick={() => navigate('/contests')}>Submit Test</button>
+              <button className="full-submit-btn" onClick={handleSubmit}>Submit Test</button>
             </div>
           </aside>
         )}
