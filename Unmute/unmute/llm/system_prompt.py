@@ -6,8 +6,6 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, Field
 
 from unmute.llm.llm_utils import autoselect_model
-from unmute.llm.newsapi import get_news
-from unmute.llm.quiz_show_questions import QUIZ_SHOW_QUESTIONS
 
 _SYSTEM_PROMPT_BASICS = """
 You're in a speech conversation with a human user. Their text is being transcribed using
@@ -246,94 +244,7 @@ class GuessAnimalInstructions(BaseModel):
         )
 
 
-QUIZ_SHOW_INSTRUCTIONS = """
-You're a quiz show host, something like "Jeopardy!" or "Who Wants to Be a Millionaire?".
-The user is a contestant and you're asking them questions.
 
-At the beginning of the game, explain the rules to the user. Say that there is a prize
-if they answer all questions.
-
-Here are the questions you should ask, in order:
-{questions}
-
-You are a bit tired of your job, so be a little snarky and poke fun at the user.
-Use British English.
-
-If they answer wrong, tell them the correct answer and continue.
-If they get at least 3 questions correctly, congratulate them but tell them that
-unfortunately there's been an error and there's no prize for them. Do not mention this
-in the first message! Then end the conversation by putting "Bye!" at the end of your
-message.
-"""
-
-
-class QuizShowInstructions(BaseModel):
-    type: Literal["quiz_show"] = "quiz_show"
-    language: LanguageCode | None = None
-
-    def make_system_prompt(self) -> str:
-        additional_instructions = QUIZ_SHOW_INSTRUCTIONS.format(
-            questions="\n".join(
-                f"{i + 1}. {question} ({answer})"
-                for i, (question, answer) in enumerate(
-                    random.sample(QUIZ_SHOW_QUESTIONS, k=5)
-                )
-            ),
-        )
-
-        return _SYSTEM_PROMPT_TEMPLATE.format(
-            _SYSTEM_PROMPT_BASICS=_SYSTEM_PROMPT_BASICS,
-            additional_instructions=additional_instructions,
-            language_instructions=LANGUAGE_CODE_TO_INSTRUCTIONS[self.language],
-            llm_name=get_readable_llm_name(),
-        )
-
-
-NEWS_INSTRUCTIONS = """
-You talk about tech news with the user. Say that this is what you do and use one of the
-articles from The Verge as a conversation starter.
-
-If they ask (no need to mention this unless asked, and do not mention in the first message):
-- You have a few headlines from The Verge but not the full articles.
-- If the user asks for more details that you don't have available, tell them to go to The Verge directly to read the full article.
-- You use "news API dot org" to get the news.
-
-It's currently {current_time} in your timezone ({timezone}).
-
-The news:
-{news}
-"""
-
-
-class NewsInstructions(BaseModel):
-    type: Literal["news"] = "news"
-    language: LanguageCode | None = None
-
-    def make_system_prompt(self) -> str:
-        news = get_news()
-
-        if not news:
-            # Fallback if we couldn't get news
-            return SmalltalkInstructions().make_system_prompt(
-                additional_instructions=_DEFAULT_ADDITIONAL_INSTRUCTIONS
-                + "\n\nYou were supposed to talk about the news, but there was an error "
-                "and you couldn't retrieve it. Explain and offer to talk about something else.",
-            )
-
-        articles = news.articles[:10]
-        random.shuffle(articles)  # to avoid bias of the LLM
-        articles_serialized = json.dumps([article.model_dump() for article in articles])
-
-        return _SYSTEM_PROMPT_TEMPLATE.format(
-            _SYSTEM_PROMPT_BASICS=_SYSTEM_PROMPT_BASICS,
-            additional_instructions=NEWS_INSTRUCTIONS.format(
-                news=articles_serialized,
-                current_time=datetime.datetime.now().strftime("%A, %B %d, %Y at %H:%M"),
-                timezone=datetime.datetime.now().astimezone().tzname(),
-            ),
-            language_instructions=LANGUAGE_CODE_TO_INSTRUCTIONS[self.language],
-            llm_name=get_readable_llm_name(),
-        )
 
 
 UNMUTE_EXPLANATION_INSTRUCTIONS = """
@@ -376,8 +287,6 @@ Instructions = Annotated[
         ConstantInstructions,
         SmalltalkInstructions,
         GuessAnimalInstructions,
-        QuizShowInstructions,
-        NewsInstructions,
         UnmuteExplanationInstructions,
     ],
     Field(discriminator="type"),

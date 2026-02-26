@@ -19,7 +19,7 @@ for d in [INCOMING, DONE, FAILED, RENDERED, SCENES_DIR]:
     os.makedirs(d, exist_ok=True)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-flash-latest"
+GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 )
@@ -32,7 +32,8 @@ You are a Manim Community Edition (v0.19) code generator for educational animati
 
 Convert the following educational content into a **single, self-contained Manim scene**.
 
-## STRICT RULES — follow every one:
+STRICT RULES — follow every one:
+
 1. Start with `from manim import *`
 2. Define exactly ONE class called `GeneratedScene(Scene):`
 3. Set background: `self.camera.background_color = "#0a1224"` in `construct()`

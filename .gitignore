@@ -53,6 +53,12 @@ certs/
 # Vite
 .vite
 
+# Manim Output Directories
+manim/media/
+manim/generated_scenes/
+manim/jobs/incoming/
+manim/jobs/done/
+
 # Python-specific (additional)
 *.egg-info/
 *.egg/

@@ -48,16 +48,9 @@ from unmute.kyutai_constants import (
     SAMPLE_RATE,
     STT_SERVER,
     TTS_SERVER,
-    VOICE_CLONING_SERVER,
 )
 from unmute.service_discovery import async_ttl_cached
 from unmute.timer import Stopwatch
-from unmute.tts.voice_cloning import clone_voice
-from unmute.tts.voice_donation import (
-    VoiceDonationSubmission,
-    generate_verification,
-    submit_voice_donation,
-)
 from unmute.tts.voices import VoiceList
 from unmute.unmute_handler import UnmuteHandler
 
@@ -75,10 +68,7 @@ logging.basicConfig(
 MAX_CLIENTS = 4
 SEMAPHORE = asyncio.Semaphore(MAX_CLIENTS)
 
-Instrumentator().instrument(app).expose(app)
-PROFILE_ACTIVE = False
-_last_profile = None
-_current_profile = None
+
 
 ClientEventAdapter = TypeAdapter(
     Annotated[ora.ClientEvent, Field(discriminator="type")]
@@ -98,16 +88,6 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {"message": "You've reached the Unmute backend server."}
-
-
-if PROFILE_ACTIVE:
-
-    @app.get("/profile")
-    def profile():
-        if _last_profile is None:
-            return HTMLResponse("<body>No last profiler saved</body>")
-        else:
-            return HTMLResponse(_last_profile.output_html())  # type: ignore
 
 
 def _ws_to_http(ws_url: str) -> str:
@@ -130,19 +110,13 @@ def _check_server_status(server_url: str, headers: dict | None = None) -> bool:
         return False
 
 
-async def debug_running_tasks():
-    while True:
-        logger.debug(f"Running tasks: {len(asyncio.all_tasks())}")
-        for task in asyncio.all_tasks():
-            logger.debug(f"  Task: {task.get_name()} - {task.get_coro()}")
-        await asyncio.sleep(5)
+
 
 
 class HealthStatus(BaseModel):
     tts_up: bool
     stt_up: bool
     llm_up: bool
-    voice_cloning_up: bool
 
     @computed_field
     @property
@@ -175,22 +149,14 @@ async def _get_health(
                 headers={"Authorization": f"Bearer {KYUTAI_LLM_API_KEY}"},
             )
         )
-        voice_cloning_up = tg.create_task(
-            asyncio.to_thread(
-                _check_server_status,
-                _ws_to_http(VOICE_CLONING_SERVER) + "/api/build_info",
-            )
-        )
         tts_up_res = await tts_up
         stt_up_res = await stt_up
         llm_up_res = await llm_up
-        voice_cloning_up_res = await voice_cloning_up
 
     return HealthStatus(
         tts_up=tts_up_res,
         stt_up=stt_up_res,
         llm_up=llm_up_res,
-        voice_cloning_up=voice_cloning_up_res,
     )
 
 
@@ -201,114 +167,14 @@ async def get_health():
     return health
 
 
-@app.get("/v1/voices")
-@cache
-def voices():
-    voice_list = VoiceList()
-    # Note that `voice.good` is bool | None, here we really take only True values.
-    good_voices = [
-        voice.model_dump(exclude={"comment"})
-        for voice in voice_list.voices
-        if voice.good
-    ]
-    return good_voices
 
-
-class LimitUploadSizeForPath(BaseHTTPMiddleware):
-    def __init__(self, app: ASGIApp, max_upload_size: int, path: str) -> None:
-        super().__init__(app)
-        self.max_upload_size = max_upload_size
-        self.path = path
-
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
-        if request.method == "POST" and request.url.path == self.path:
-            if "content-length" not in request.headers:
-                return Response(status_code=status.HTTP_411_LENGTH_REQUIRED)
-
-            content_length = int(request.headers["content-length"])
-            if content_length > self.max_upload_size:
-                return Response(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
-
-        return await call_next(request)
-
-
-app.add_middleware(
-    LimitUploadSizeForPath,
-    max_upload_size=MAX_VOICE_FILE_SIZE_MB * 1024 * 1024,
-    path="/v1/voices",
-)
-
-
-@app.post("/v1/voices")
-async def post_voices(file: UploadFile):
-    """Upload a voice list file.
-
-    Make sure the maximum file size is configured in uvicorn.
-    """
-    name = clone_voice(file.file.read())
-    return {"name": name}
-
-
-@app.get("/v1/voice-donation")
-async def get_voice_donation():
-    """Initiate a voice donation by asking for a verification text."""
-    verification = generate_verification()
-    return verification
-
-
-app.add_middleware(
-    LimitUploadSizeForPath,
-    max_upload_size=MAX_VOICE_FILE_SIZE_MB * 1024 * 1024,
-    path="/v1/voice-donation",
-)
-
-
-@app.post("/v1/voice-donation")
-async def post_voice_donation(
-    file: UploadFile = File(...),  # noqa: B008
-    metadata: str = Form(...),
-):
-    """Finish a voice donation."""
-    file_bytes = file.file.read()
-
-    try:
-        metadata_parsed = VoiceDonationSubmission(**json.loads(metadata))
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}") from e
-    except ValidationError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid submission: {e.errors()}",
-        ) from e
-
-    try:
-        submit_voice_donation(metadata_parsed, file_bytes)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    return {}
 
 
 @app.websocket("/v1/realtime")
 async def websocket_route(websocket: WebSocket):
-    global _last_profile, _current_profile
     mt.SESSIONS.inc()
     mt.ACTIVE_SESSIONS.inc()
     session_watch = Stopwatch()
-    if PROFILE_ACTIVE and _current_profile is None:
-        from pyinstrument import Profiler
-
-        logger.info("Profiler started.")
-        _current_profile = Profiler(interval=0.0001, async_mode="disabled")
-        import inspect
-
-        frame = inspect.currentframe()
-        while frame is not None and frame.f_back:
-            frame = frame.f_back
-        _current_profile.start(caller_frame=frame)
-
     async with SEMAPHORE:
         try:
             # The `subprotocol` argument is important because the client specifies what
@@ -325,12 +191,6 @@ async def websocket_route(websocket: WebSocket):
         except Exception as exc:
             await _report_websocket_exception(websocket, exc)
         finally:
-            if _current_profile is not None:
-                _current_profile.stop()
-                logger.info("Profiler saved.")
-                _last_profile = _current_profile
-                _current_profile = None
-
             mt.ACTIVE_SESSIONS.dec()
             mt.SESSION_DURATION.observe(session_watch.time())
 
@@ -401,7 +261,6 @@ async def _run_route(websocket: WebSocket, handler: UnmuteHandler):
                 emit_loop(websocket, handler, emit_queue), name="emit_loop()"
             )
             tg.create_task(handler.quest_manager.wait(), name="quest_manager.wait()")
-            tg.create_task(debug_running_tasks(), name="debug_running_tasks()")
     finally:
         await handler.cleanup()
         logger.info("websocket_route() finished")
@@ -1046,13 +905,13 @@ async def api_chat(body: ChatRequest):
     try:
         response = await asyncio.to_thread(
             _gemini_client.chat.completions.create,
-            model="gemini-flash-latest",
+            model="gemini-2.5-flash",
             reasoning_effort="low",
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You are a friendly and knowledgeable JEE/NEET tutor on the SQORA platform. "
+                        "You are a friendly and knowledgeable JEE/NEET tutor"
                         "Give clear, concise explanations with examples. "
                         "Use simple language suitable for Indian high-school students preparing for competitive exams."
                     ),
