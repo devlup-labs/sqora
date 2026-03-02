@@ -20,11 +20,28 @@ from unmute.kyutai_constants import (
     STT_SERVER,
 )
 from unmute.service_discovery import ServiceWithStartup
-from unmute.stt.exponential_moving_average import ExponentialMovingAverage
 from unmute.timer import Stopwatch
 from unmute.websocket_utils import WebsocketState
 
 logger = getLogger(__name__)
+
+
+class ExponentialMovingAverage:
+    """EMA with separate attack/release smoothing times, used for VAD pause prediction."""
+
+    def __init__(self, attack_time: float, release_time: float, initial_value: float = 0.0):
+        self.attack_time = attack_time
+        self.release_time = release_time
+        self.value = initial_value
+
+    def update(self, *, dt: float, new_value: float) -> float:
+        import math
+        assert dt > 0.0
+        assert new_value >= 0.0
+        time_const = self.attack_time if new_value > self.value else self.release_time
+        alpha = 1 - math.exp(-dt / time_const * math.log(2))
+        self.value = float((1 - alpha) * self.value + alpha * new_value)
+        return self.value
 
 
 class STTWordMessage(BaseModel):

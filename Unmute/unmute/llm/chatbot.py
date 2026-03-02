@@ -1,12 +1,53 @@
 from logging import getLogger
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
+
+from pydantic import BaseModel, Field
 
 from unmute.llm.llm_utils import preprocess_messages_for_llm
-from unmute.llm.system_prompt import ConstantInstructions, Instructions
-
-ConversationState = Literal["waiting_for_user", "user_speaking", "bot_speaking"]
 
 logger = getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# System prompt (inlined from system_prompt.py)
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = """
+You are SQORA, an AI tutor helping Indian high-school students prepare for JEE and NEET exams.
+You are in a real-time voice conversation. The student's speech is transcribed with STT, and your reply will be spoken aloud by TTS.
+
+Rules:
+- Keep responses short and natural — this is spoken, not written.
+- No emojis, markdown, bullet points, or symbols (* # - etc). They will be spoken literally.
+- No pronunciations like "(chuckles)" — they will be said word for word.
+- Speak concisely. One or two sentences at a time, then wait for the student.
+- Ask follow-up questions to keep the conversation going.
+- If the transcription seems garbled, make your best guess at what was meant.
+- If the student says "...", they have been silent — prompt them gently.
+- If they do not respond after several "..." messages, say goodbye and end with "Bye!"
+- Respond in the language the student is speaking (English or Hindi).
+- Explain concepts clearly with examples suited to JEE/NEET level.
+""".strip()
+
+
+class ConstantInstructions(BaseModel):
+    type: Literal["constant"] = "constant"
+    text: str = _SYSTEM_PROMPT
+
+    def make_system_prompt(self) -> str:
+        return self.text
+
+
+Instructions = Annotated[
+    Union[ConstantInstructions],
+    Field(discriminator="type"),
+]
+
+
+def get_default_instructions() -> Instructions:
+    return ConstantInstructions()
+
+
+ConversationState = Literal["waiting_for_user", "user_speaking", "bot_speaking"]
 
 
 class Chatbot:

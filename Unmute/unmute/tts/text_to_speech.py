@@ -1,5 +1,7 @@
 import asyncio
+import heapq
 import urllib.parse
+from dataclasses import dataclass, field
 from logging import getLogger
 from typing import Annotated, Any, AsyncIterator, Callable, Literal, Union, cast
 
@@ -17,13 +19,46 @@ from unmute.kyutai_constants import (
     TEXT_TO_SPEECH_PATH,
     TTS_SERVER,
 )
-from unmute.recorder import Recorder
 from unmute.service_discovery import ServiceWithStartup
 from unmute.timer import Stopwatch
-from unmute.tts.realtime_queue import RealtimeQueue
 from unmute.websocket_utils import WebsocketState
 
 logger = getLogger(__name__)
+
+
+@dataclass(order=True)
+class _TimedItem[T]:
+    time: float
+    item: T = field(compare=False)
+
+
+class RealtimeQueue[T]:
+    """Accumulates timestamped audio chunks and releases them at the right wall-clock time."""
+
+    def __init__(self, get_time: Callable[[], float] | None = None):
+        self.queue: list[_TimedItem] = []
+        self.start_time: float | None = None
+        self.get_time = get_time or (lambda: asyncio.get_event_loop().time())
+
+    def start_if_not_started(self):
+        if self.start_time is None:
+            self.start_time = self.get_time()
+
+    def put(self, item: T, time: float):
+        heapq.heappush(self.queue, _TimedItem(time, item))
+
+    def empty(self):
+        return not self.queue
+
+    async def __aiter__(self):
+        if self.start_time is None or not self.queue:
+            return
+        while self.queue:
+            delta = self.queue[0].time - (self.get_time() - self.start_time)
+            if delta > 0:
+                await asyncio.sleep(delta)
+            item = heapq.heappop(self.queue)
+            yield item.time, item.item
 
 
 class TTSClientTextMessage(BaseModel):
@@ -132,14 +167,10 @@ class TextToSpeech(ServiceWithStartup):
     def __init__(
         self,
         tts_instance: str = TTS_SERVER,
-        # For TTS, we do internal queuing, so we pass in the recorder to be able to
-        # record the true time of the messages.
-        recorder: Recorder | None = None,
         get_time: Callable[[], float] | None = None,
         voice: str | None = None,
     ):
         self.tts_instance = tts_instance
-        self.recorder = recorder
         self.websocket: websockets.ClientConnection | None = None
 
         self.time_since_first_text_sent = Stopwatch(autostart=False)
@@ -287,13 +318,6 @@ class TextToSpeech(ServiceWithStartup):
                     )
                     self.received_samples += len(message.pcm)
 
-                    if self.recorder is not None:
-                        await self.recorder.add_event(
-                            "server",
-                            ora.UnmuteResponseAudioDeltaReady(
-                                number_of_samples=len(message.pcm)
-                            ),
-                        )
 
                 elif isinstance(message, TTSTextMessage):
                     mt.TTS_RECV_WORDS.inc()

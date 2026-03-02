@@ -17,7 +17,7 @@ from typing import (
 
 from pydantic import BaseModel, Field, model_validator
 
-from unmute.llm.system_prompt import Instructions
+from unmute.llm.chatbot import Instructions
 
 T = TypeVar("T", bound=str)
 

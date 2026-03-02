@@ -2,7 +2,6 @@ import asyncio
 import math
 from functools import partial
 from logging import getLogger
-from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -18,11 +17,9 @@ from pydantic import BaseModel
 
 import unmute.openai_realtime_api_events as ora
 from unmute import metrics as mt
-from unmute.audio_input_override import AudioInputOverride
 from unmute.exceptions import make_ora_error
 from unmute.kyutai_constants import (
     FRAME_TIME_SEC,
-    RECORDINGS_DIR,
     SAMPLE_RATE,
     SAMPLES_PER_FRAME,
 )
@@ -35,7 +32,6 @@ from unmute.llm.llm_utils import (
     rechunk_to_words,
 )
 from unmute.quest_manager import Quest, QuestManager
-from unmute.recorder import Recorder
 from unmute.service_discovery import find_instance
 from unmute.stt.speech_to_text import SpeechToText, STTMarkerMessage
 from unmute.timer import Stopwatch
@@ -45,14 +41,6 @@ from unmute.tts.text_to_speech import (
     TTSClientEosMessage,
     TTSTextMessage,
 )
-
-# TTS_DEBUGGING_TEXT: str | None = "What's 'Hello world'?"
-# TTS_DEBUGGING_TEXT: str | None = "What's the difference between a bagel and a donut?"
-TTS_DEBUGGING_TEXT = None
-
-# AUDIO_INPUT_OVERRIDE: Path | None = Path.home() / "audio/dog-or-cat-3.mp3"
-AUDIO_INPUT_OVERRIDE: Path | None = None
-DEBUG_PLOT_HISTORY_SEC = 10.0
 
 USER_SILENCE_TIMEOUT = 7.0
 FIRST_MESSAGE_TEMPERATURE = 0
@@ -87,7 +75,6 @@ class UnmuteHandler(AsyncStreamHandler):
         )
         self.n_samples_received = 0  # Used for measuring time
         self.output_queue: asyncio.Queue[HandlerOutput] = asyncio.Queue()
-        self.recorder = Recorder(RECORDINGS_DIR) if RECORDINGS_DIR else None
 
         self.quest_manager = QuestManager()
 
@@ -111,14 +98,8 @@ class UnmuteHandler(AsyncStreamHandler):
         self.debug_plot_data: list[dict] = []
         self.last_additional_output_update = self.audio_received_sec()
 
-        if AUDIO_INPUT_OVERRIDE is not None:
-            self.audio_input_override = AudioInputOverride(AUDIO_INPUT_OVERRIDE)
-        else:
-            self.audio_input_override = None
-
     async def cleanup(self):
-        if self.recorder is not None:
-            await self.recorder.shutdown()
+        pass  # Add cleanup logic here if needed
 
     @property
     def stt(self) -> SpeechToText | None:
@@ -305,30 +286,7 @@ class UnmuteHandler(AsyncStreamHandler):
             # Periodically update this not to trigger the "long silence" accidentally.
             self.waiting_for_user_start_time = self.audio_received_sec()
 
-        if TTS_DEBUGGING_TEXT is not None:
-            assert self.audio_input_override is None, (
-                "Can't use both TTS_DEBUGGING_TEXT and audio input override."
-            )
 
-            # Debugging mode: always send a fixed string when it's the user's turn.
-            if self.chatbot.conversation_state() == "waiting_for_user":
-                logger.info("Using TTS debugging text. Ignoring microphone.")
-                self.chatbot.chat_history.append(
-                    {"role": "user", "content": TTS_DEBUGGING_TEXT}
-                )
-                await self._generate_response()
-            return
-
-        if (
-            len(self.chatbot.chat_history) == 1
-            # Wait until the instructions are updated. A bit hacky
-            and self.chatbot.get_instructions() is not None
-        ):
-            logger.info("Generating initial response.")
-            await self._generate_response()
-
-        if self.audio_input_override is not None:
-            frame = (frame[0], self.audio_input_override.override(frame[1]))
 
         if self.chatbot.conversation_state() == "user_speaking":
             self.debug_dict["timing"] = {}
@@ -471,7 +429,6 @@ class UnmuteHandler(AsyncStreamHandler):
         async def _init() -> TextToSpeech:
             factory = partial(
                 TextToSpeech,
-                recorder=self.recorder,
                 get_time=self.audio_received_sec,
                 voice=self.tts_voice,
             )
@@ -643,9 +600,3 @@ class UnmuteHandler(AsyncStreamHandler):
 
         if session.voice:
             self.tts_voice = session.voice
-
-        if not session.allow_recording and self.recorder:
-            await self.recorder.add_event("client", ora.SessionUpdate(session=session))
-            await self.recorder.shutdown(keep_recording=False)
-            self.recorder = None
-            logger.info("Recording disabled for a session.")
