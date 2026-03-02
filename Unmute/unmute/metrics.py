@@ -125,4 +125,4 @@ VLLM_GEN_DURATION = Histogram(
     "worker_vllm_gen_duration", "", buckets=GENERATION_DURATION_BINS
 )
 
-VOICE_DONATION_SUBMISSIONS = Counter("worker_voice_donation_submissions", "")
+

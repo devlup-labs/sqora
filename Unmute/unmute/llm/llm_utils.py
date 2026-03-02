@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator, Protocol, cast
 from mistralai import Mistral
 from openai import AsyncOpenAI, OpenAI
 
-from unmute.kyutai_constants import LLM_SERVER
+from unmute.kyutai_constants import LLM_SERVER, LLM_PATH
 
 from ..kyutai_constants import KYUTAI_LLM_API_KEY, KYUTAI_LLM_MODEL
 
@@ -126,7 +126,7 @@ def get_openai_client(
 ) -> AsyncOpenAI:
     # AsyncOpenAI() will complain if the API key is not set, so set a dummy string if it's None.
     # This still makes sense when using vLLM because it doesn't care about the API key.
-    return AsyncOpenAI(api_key=api_key or "EMPTY", base_url=server_url + "/v1")
+    return AsyncOpenAI(api_key=api_key or "EMPTY", base_url=server_url + LLM_PATH)
 
 
 @cache

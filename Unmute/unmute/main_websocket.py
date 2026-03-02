@@ -44,14 +44,13 @@ from unmute.exceptions import (
 from unmute.kyutai_constants import (
     KYUTAI_LLM_API_KEY,
     LLM_SERVER,
-    MAX_VOICE_FILE_SIZE_MB,
+    LLM_PATH,
     SAMPLE_RATE,
     STT_SERVER,
     TTS_SERVER,
 )
 from unmute.service_discovery import async_ttl_cached
 from unmute.timer import Stopwatch
-from unmute.tts.voices import VoiceList
 from unmute.unmute_handler import UnmuteHandler
 
 app = FastAPI()
@@ -143,7 +142,7 @@ async def _get_health(
         llm_up = tg.create_task(
             asyncio.to_thread(
                 _check_server_status,
-                _ws_to_http(LLM_SERVER) + "/v1/models",
+                _ws_to_http(LLM_SERVER) + LLM_PATH + "/models",
                 # The default vLLM server doesn't use auth, but this is needed if you
                 # use OpenAI or another LLM server.
                 headers={"Authorization": f"Bearer {KYUTAI_LLM_API_KEY}"},

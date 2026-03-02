@@ -42,6 +42,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 chat_history.json
+ai_response_cache.json
+video_cache.json
 recordings/
 debug/
 
@@ -70,3 +72,4 @@ next-env.d.ts
 CLAUDE.md
 
 
+.agents/
