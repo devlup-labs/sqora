@@ -56,6 +56,9 @@ function AIMentor() {
   const [videoPolling, setVideoPolling] = useState(false)
   const videoRef = useRef(null)
   const pollingRef = useRef(null)
+  const activeAudioRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const audioChunksRef = useRef([])
 
   // Poll for video readiness when activeVideoId changes
   useEffect(() => {
@@ -96,13 +99,40 @@ function AIMentor() {
     }
   }, [videoReady])
 
-  const triggerMentorResponse = (text) => {
+  const triggerMentorResponse = async (text) => {
     setIsSpeaking(true)
 
-    if (voiceEnabled && 'speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(stripForTTS(text))
-      utterance.onend = () => setIsSpeaking(false)
-      window.speechSynthesis.speak(utterance)
+    if (voiceEnabled) {
+      try {
+        const formData = new FormData()
+        formData.append('text', stripForTTS(text))
+
+        const res = await fetch('http://localhost:8000/tts', {
+          method: 'POST',
+          body: formData,
+        })
+
+        if (res.ok) {
+          const blob = await res.blob()
+          const url = URL.createObjectURL(blob)
+          const audio = new Audio(url)
+          activeAudioRef.current = audio
+
+          audio.onended = () => {
+            setIsSpeaking(false)
+            URL.revokeObjectURL(url)
+            activeAudioRef.current = null
+          }
+
+          audio.play().catch(console.error)
+        } else {
+          console.error('Pocket TTS generated an error:', res.statusText)
+          setTimeout(() => setIsSpeaking(false), 3000)
+        }
+      } catch (err) {
+        console.error('Failed to connect to Pocket TTS local server.', err)
+        setTimeout(() => setIsSpeaking(false), 3000)
+      }
     } else {
       setTimeout(() => setIsSpeaking(false), 3000)
     }
@@ -144,48 +174,62 @@ function AIMentor() {
     }
   }
 
-  useEffect(() => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition
-
-    if (!SpeechRecognition) {
-      console.warn('Speech recognition is not supported in this browser.')
-      return
+  const stopRecordingAndSend = () => {
+    setIsListening(false)
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
     }
+  }
 
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'en-IN'
-    recognition.interimResults = false
-    recognition.maxAlternatives = 1
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
 
-    recognition.onstart = () => {
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        const formData = new FormData()
+        formData.append('audio', audioBlob, 'record.webm')
+
+        try {
+          const res = await fetch('http://localhost:8090/stt', {
+            method: 'POST',
+            body: formData,
+          })
+          if (res.ok) {
+            const data = await res.json()
+            if (data.text) {
+              setLastQuestion(data.text)
+              handleAIResponse(data.text)
+            } else {
+              console.warn('STT returned empty text.')
+            }
+          } else {
+            console.error('STT API failed', res.statusText)
+          }
+        } catch (e) {
+          console.error('STT network error', e)
+        }
+
+        stream.getTracks().forEach(track => track.stop())
+      }
+
+      mediaRecorder.start()
       setIsListening(true)
       setLastAnswer('')
+    } catch (err) {
+      console.error('Error accessing microphone', err)
+      alert('Could not access microphone.')
     }
-
-    recognition.onend = () => {
-      setIsListening(false)
-    }
-
-    recognition.onerror = () => {
-      setIsListening(false)
-    }
-
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript
-      setLastQuestion(transcript)
-      handleAIResponse(transcript)
-    }
-
-    recognitionRef.current = recognition
-
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-      }
-      recognitionRef.current = null
-    }
-  }, [])
+  }
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -209,22 +253,19 @@ function AIMentor() {
 
   const handleMicClick = () => {
     if (isSpeaking) {
-      window.speechSynthesis.cancel()
+      if (activeAudioRef.current) {
+        activeAudioRef.current.pause()
+        activeAudioRef.current.currentTime = 0
+        activeAudioRef.current = null
+      }
       setIsSpeaking(false)
       return
     }
 
-    const recognition = recognitionRef.current
-
-    if (!recognition) {
-      alert('Speech recognition is not supported in this browser.')
-      return
-    }
-
     if (isListening) {
-      recognition.stop()
+      stopRecordingAndSend()
     } else {
-      recognition.start()
+      startRecording()
     }
   }
 
