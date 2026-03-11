@@ -57,8 +57,8 @@ function AIMentor() {
   const videoRef = useRef(null)
   const pollingRef = useRef(null)
   const activeAudioRef = useRef(null)
-  const mediaRecorderRef = useRef(null)
-  const audioChunksRef = useRef([])
+  const sttRef = useRef(null)                           // SpeechRecognition instance
+  const [liveTranscript, setLiveTranscript] = useState('')
 
   // Poll for video readiness when activeVideoId changes
   useEffect(() => {
@@ -99,46 +99,81 @@ function AIMentor() {
     }
   }, [videoReady])
 
-  const triggerMentorResponse = async (text) => {
+  // ----- TTS: parallel sentence pipeline — direct to port 8089, no proxy -----
+  const speakTextPipelined = async (text) => {
+    if (!voiceEnabled || !text.trim()) return
     setIsSpeaking(true)
 
-    if (voiceEnabled) {
+    // Smart sentence split
+    const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [text]
+    const sentences = rawSentences.filter((s) => s.trim().length > 1)
+    const finalSentences = sentences.length > 0 ? sentences : [text]
+    console.log(`[TTS] ${finalSentences.length} sentence(s)`)
+
+    const VOICE = 'cosette'   // clearly female pocket-tts voice
+
+    const fetchAudio = async (sentence) => {
+      const stripped = stripForTTS(sentence.trim())
+      if (!stripped) return null
       try {
-        const formData = new FormData()
-        formData.append('text', stripForTTS(text))
-
-        const res = await fetch('http://localhost:8000/tts', {
-          method: 'POST',
-          body: formData,
-        })
-
+        const fd = new FormData()
+        fd.append('text', stripped)
+        fd.append('voice_url', VOICE)
+        const res = await fetch('http://localhost:8089/tts', { method: 'POST', body: fd })
         if (res.ok) {
-          const blob = await res.blob()
-          const url = URL.createObjectURL(blob)
-          const audio = new Audio(url)
-          activeAudioRef.current = audio
-
-          audio.onended = () => {
-            setIsSpeaking(false)
-            URL.revokeObjectURL(url)
-            activeAudioRef.current = null
-          }
-
-          audio.play().catch(console.error)
-        } else {
-          console.error('Pocket TTS generated an error:', res.statusText)
-          setTimeout(() => setIsSpeaking(false), 3000)
+          const buf = await res.arrayBuffer()
+          return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
         }
-      } catch (err) {
-        console.error('Failed to connect to Pocket TTS local server.', err)
-        setTimeout(() => setIsSpeaking(false), 3000)
+        console.error('[TTS] Server error:', res.status)
+      } catch (e) {
+        console.error('[TTS] fetch error:', e)
       }
-    } else {
-      setTimeout(() => setIsSpeaking(false), 3000)
+      return null
     }
+
+    // Prefetch-while-playing pipeline:
+    //   1. Start fetching sentence 0 immediately.
+    //   2. When sentence 0 is ready → start PLAYING it AND start fetching sentence 1.
+    //   3. Sentence 1 has the entire playback duration of sentence 0 to finish generating.
+    //   4. Repeat → zero gaps (as long as TTS generation ≤ playback time).
+    //
+    // This sends ONE request at a time to the (sequential) TTS server,
+    // which is far more efficient than parallel flooding.
+
+    let nextFetchPromise = finalSentences.length > 0 ? fetchAudio(finalSentences[0]) : null
+
+    for (let i = 0; i < finalSentences.length; i++) {
+      const url = await nextFetchPromise   // wait for current sentence audio
+
+      // Immediately kick off the NEXT fetch so it runs while we play
+      nextFetchPromise = (i + 1 < finalSentences.length)
+        ? fetchAudio(finalSentences[i + 1])
+        : null
+
+      if (!url) continue
+
+      console.log(`[TTS] ▶ sentence ${i + 1}/${finalSentences.length}`)
+      await new Promise((resolve) => {
+        const audio = new Audio(url)
+        activeAudioRef.current = audio
+        audio.onended = () => { URL.revokeObjectURL(url); resolve() }
+        audio.onerror = (e) => { console.error('[TTS] playback error:', e); URL.revokeObjectURL(url); resolve() }
+        audio.play().catch((err) => { console.error('[TTS] play() blocked:', err); resolve() })
+      })
+    }
+
+    setIsSpeaking(false)
+    activeAudioRef.current = null
   }
 
+  // ----- AI Response: show dots while thinking, reveal all at once -----
   const handleAIResponse = async (questionText) => {
+    setChatMessages((prev) => [
+      ...prev,
+      { role: 'user', text: questionText },
+      { role: 'assistant', text: '__thinking__' },
+    ])
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -146,90 +181,92 @@ function AIMentor() {
         body: JSON.stringify({ message: questionText }),
       })
       const data = await res.json()
-      const aiResponse = data.reply || 'Sorry, something went wrong.'
+      const reply = data.reply || 'Sorry, something went wrong.'
       const videoId = data.video_id
 
-      // Add user message with video_id (for parallel manim generation)
-      setChatMessages((prev) => [...prev, { role: 'user', text: questionText, video_id: videoId }])
+      setChatMessages((prev) => {
+        const updated = [...prev]
+        updated[updated.length - 1] = { role: 'assistant', text: reply, video_id: videoId }
+        updated[updated.length - 2] = { ...updated[updated.length - 2], video_id: videoId }
+        return updated
+      })
+      if (videoId) setActiveVideoId(videoId)
 
-      // Add AI response
-      setChatMessages((prev) => [...prev, { role: 'assistant', text: aiResponse }])
-      setLastAnswer(aiResponse)
-      triggerMentorResponse(aiResponse)
-
-      // Set active video to the newly created one
-      if (videoId) {
-        setActiveVideoId(videoId)
-      }
+      // Start pipelined TTS (all sentences in parallel, play in order)
+      speakTextPipelined(reply)
     } catch (err) {
       console.error('Chat error:', err)
       const fallback = 'Could not reach the server.'
-      setChatMessages((prev) => [
-        ...prev,
-        { role: 'user', text: questionText },
-        { role: 'assistant', text: fallback }
-      ])
-      setLastAnswer(fallback)
-      triggerMentorResponse(fallback)
+      setChatMessages((prev) => {
+        const updated = [...prev]
+        updated[updated.length - 1] = { role: 'assistant', text: fallback }
+        return updated
+      })
     }
   }
 
+  // ----- STT: browser Web Speech API (Chrome → Google cloud, best quality) -----
   const stopRecordingAndSend = () => {
     setIsListening(false)
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop()
+    setLiveTranscript('')
+    if (sttRef.current) {
+      sttRef.current.stop()
+      sttRef.current = null
     }
   }
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mediaRecorder = new MediaRecorder(stream)
-      mediaRecorderRef.current = mediaRecorder
-      audioChunksRef.current = []
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
-      }
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-        const formData = new FormData()
-        formData.append('audio', audioBlob, 'record.webm')
-
-        try {
-          const res = await fetch('http://localhost:8090/stt', {
-            method: 'POST',
-            body: formData,
-          })
-          if (res.ok) {
-            const data = await res.json()
-            if (data.text) {
-              setLastQuestion(data.text)
-              handleAIResponse(data.text)
-            } else {
-              console.warn('STT returned empty text.')
-            }
-          } else {
-            console.error('STT API failed', res.statusText)
-          }
-        } catch (e) {
-          console.error('STT network error', e)
-        }
-
-        stream.getTracks().forEach(track => track.stop())
-      }
-
-      mediaRecorder.start()
-      setIsListening(true)
-      setLastAnswer('')
-    } catch (err) {
-      console.error('Error accessing microphone', err)
-      alert('Could not access microphone.')
+  const startRecording = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      alert('Speech recognition is not supported in this browser. Please use Chrome or Edge.')
+      return
     }
+
+    const recognition = new SR()
+    sttRef.current = recognition
+    recognition.lang = 'en-US'
+    recognition.continuous = false     // auto-stops after natural pause
+    recognition.interimResults = true  // show live partial results
+    recognition.maxAlternatives = 1
+
+    let finalText = ''
+
+    recognition.onresult = (event) => {
+      let interim = ''
+      finalText = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalText += event.results[i][0].transcript
+        } else {
+          interim += event.results[i][0].transcript
+        }
+      }
+      setLiveTranscript(finalText || interim)
+    }
+
+    recognition.onend = () => {
+      setIsListening(false)
+      setLiveTranscript('')
+      sttRef.current = null
+      const text = finalText.trim()
+      if (text) {
+        setLastQuestion(text)
+        handleAIResponse(text)
+      }
+    }
+
+    recognition.onerror = (event) => {
+      console.error('[STT] Error:', event.error)
+      setIsListening(false)
+      setLiveTranscript('')
+      sttRef.current = null
+    }
+
+    recognition.start()
+    setIsListening(true)
+    setLiveTranscript('')
   }
+
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -253,9 +290,9 @@ function AIMentor() {
 
   const handleMicClick = () => {
     if (isSpeaking) {
+      // Stop current audio immediately
       if (activeAudioRef.current) {
         activeAudioRef.current.pause()
-        activeAudioRef.current.currentTime = 0
         activeAudioRef.current = null
       }
       setIsSpeaking(false)
@@ -269,43 +306,13 @@ function AIMentor() {
     }
   }
 
+
   const handleChatSend = async () => {
     const trimmed = chatInput.trim()
     if (!trimmed) return
-
     setChatInput('')
-
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed }),
-      })
-      const data = await res.json()
-      const aiResponse = data.reply || 'Sorry, something went wrong.'
-      const videoId = data.video_id
-
-      // Add user message with video_id (for parallel manim generation)
-      setChatMessages((prev) => [...prev, { role: 'user', text: trimmed, video_id: videoId }])
-
-      // Add AI response
-      setChatMessages((prev) => [...prev, { role: 'assistant', text: aiResponse }])
-      setLastQuestion(trimmed)
-      setLastAnswer(aiResponse)
-      triggerMentorResponse(aiResponse)
-
-      // Set active video to the newly created one
-      if (videoId) {
-        setActiveVideoId(videoId)
-      }
-    } catch (err) {
-      console.error('Chat error:', err)
-      setChatMessages((prev) => [
-        ...prev,
-        { role: 'user', text: trimmed },
-        { role: 'assistant', text: 'Could not reach the server.' }
-      ])
-    }
+    setLastQuestion(trimmed)
+    await handleAIResponse(trimmed)
   }
 
   // When chat messages update, auto-select the latest video
@@ -402,7 +409,15 @@ function AIMentor() {
                 <span className="status-pill idle">Tap the mic to ask</span>
               )}
             </div>
+
+            {/* Live partial transcript while recording */}
+            {isListening && liveTranscript && (
+              <div className="mentor-live-transcript">
+                {liveTranscript}
+              </div>
+            )}
           </div>
+
         </div>
 
         {/* Chat toggle */}
@@ -434,9 +449,15 @@ function AIMentor() {
                 >
                   {msg.role === 'assistant' ? (
                     <>
-                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                        {msg.text}
-                      </ReactMarkdown>
+                      {msg.text === '__thinking__' ? (
+                        <span className="thinking-dots">
+                          <span /><span /><span />
+                        </span>
+                      ) : (
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {msg.text}
+                        </ReactMarkdown>
+                      )}
                     </>
                   ) : (
                     <>
@@ -453,6 +474,7 @@ function AIMentor() {
                   )}
                 </div>
               ))}
+
             </div>
             <div className="mentor-chat-input">
               <input

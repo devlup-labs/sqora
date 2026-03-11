@@ -11,28 +11,15 @@ import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
-from openai import OpenAI
+from fastapi import APIRouter, HTTPException, File, Form
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from unmute.llm.llm_service import llm_service
 from pydantic import BaseModel
+import requests
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# ---------------------------------------------------------------------------
-# Gemini AI client
-# ---------------------------------------------------------------------------
-
-_gemini_api_key = os.environ.get("GEMINI_API_KEY", "")
-_gemini_client: OpenAI | None = None
-if _gemini_api_key:
-    _gemini_client = OpenAI(
-        api_key=_gemini_api_key,
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-    )
-else:
-    logger.warning("GEMINI_API_KEY is not set. /api/chat will return fallback responses.")
 
 # ---------------------------------------------------------------------------
 # File-based caches (relative to Unmute/ working directory)
@@ -223,52 +210,30 @@ async def api_login(body: AuthLogin):
     return {"token": "demo-token", "role": user["role"]}
 
 # ---------------------------------------------------------------------------
-# Routes – AI Chat
-# ---------------------------------------------------------------------------
-
 @router.post("/api/chat")
 async def api_chat(body: ChatRequest):
     global ai_response_cache
-    if not _gemini_client:
-        return {"reply": "AI is not configured. Please set GEMINI_API_KEY."}
-
+    
     key = _normalize_prompt(body.message)
     if key in ai_response_cache:
         reply = ai_response_cache[key]
         logger.info(f"AI cache hit: {body.message[:50]}")
-        lesson_id = _create_animation_job(body.message, _extract_topic(body.message))
+        lesson_id = _create_animation_job(reply, _extract_topic(body.message))
         _append_to_chat_history("user", body.message, video_id=lesson_id)
         _append_to_chat_history("assistant", reply)
         return {"reply": reply, "video_id": lesson_id}
 
-    lesson_id = _create_animation_job(body.message, _extract_topic(body.message))
+    # Use the modular LLM service to get the response
+    reply = await llm_service.get_response(body.message, chat_history)
+    
+    # Save to cache
+    ai_response_cache[key] = reply
+    _save_json(AI_RESPONSE_CACHE_FILE, ai_response_cache)
+    
+    # Create animation job and record history
+    lesson_id = _create_animation_job(reply, _extract_topic(body.message))
     _append_to_chat_history("user", body.message, video_id=lesson_id)
-
-    try:
-        response = await asyncio.to_thread(
-            _gemini_client.chat.completions.create,
-            model="gemini-2.5-flash",
-            reasoning_effort="low",
-            messages=[
-                {"role": "system", "content": (
-                    "You are a friendly and knowledgeable JEE/NEET tutor. "
-                    "Give clear, concise explanations with examples. "
-                    "Use simple language suitable for Indian high-school students preparing for competitive exams."
-                )},
-                *[
-                    {"role": "assistant" if m["role"] == "ai" else m["role"], "content": m["text"]}
-                    for m in chat_history[-10:]
-                ],
-            ],
-            temperature=0,
-        )
-        reply = response.choices[0].message.content
-        ai_response_cache[key] = reply
-        _save_json(AI_RESPONSE_CACHE_FILE, ai_response_cache)
-        _append_to_chat_history("assistant", reply)
-    except Exception as e:
-        logger.error("Gemini chat error: %s", e)
-        reply = "Sorry, I couldn't process your question right now. Please try again."
+    _append_to_chat_history("assistant", reply)
 
     return {"reply": reply, "video_id": lesson_id}
 
@@ -276,6 +241,75 @@ async def api_chat(body: ChatRequest):
 @router.get("/api/chat")
 async def api_chat_history():
     return {"history": chat_history}
+
+
+@router.get("/api/chat/stream")
+async def api_chat_stream(message: str):
+    """
+    SSE streaming endpoint. Yields:
+      data: <token>          — one or more raw text tokens
+      data: [DONE] <json>   — final event with full reply + video_id
+    """
+    from fastapi.responses import StreamingResponse as _SR
+
+    key = _normalize_prompt(message)
+
+    # Cache hit – send all at once but still as SSE
+    if key in ai_response_cache:
+        cached = ai_response_cache[key]
+        lesson_id = _create_animation_job(cached, _extract_topic(message))
+        _append_to_chat_history("user", message, video_id=lesson_id)
+        _append_to_chat_history("assistant", cached)
+
+        async def _cached_gen():
+            yield f"data: {json.dumps({'token': cached})}\n\n"
+            yield f"data: [DONE] {json.dumps({'video_id': lesson_id, 'reply': cached})}\n\n"
+        return _SR(_cached_gen(), media_type="text/event-stream")
+
+    # Streaming from Gemini
+    async def _stream_gen():
+        global ai_response_cache
+        full_reply = []
+
+        def _iter():
+            return llm_service.stream_response(message, chat_history)
+
+        loop = asyncio.get_event_loop()
+        q: asyncio.Queue = asyncio.Queue()
+
+        def _producer():
+            try:
+                for token in _iter():
+                    loop.call_soon_threadsafe(q.put_nowait, token)
+            finally:
+                loop.call_soon_threadsafe(q.put_nowait, None)  # sentinel
+
+        import threading
+        threading.Thread(target=_producer, daemon=True).start()
+
+        while True:
+            token = await q.get()
+            if token is None:
+                break
+            full_reply.append(token)
+            yield f"data: {json.dumps({'token': token})}\n\n"
+
+        reply = "".join(full_reply)
+        ai_response_cache[key] = reply
+        _save_json(AI_RESPONSE_CACHE_FILE, ai_response_cache)
+
+        lesson_id = _create_animation_job(reply, _extract_topic(message))
+        _append_to_chat_history("user", message, video_id=lesson_id)
+        _append_to_chat_history("assistant", reply)
+
+        yield f"data: [DONE] {json.dumps({'video_id': lesson_id, 'reply': reply})}\n\n"
+
+    return _SR(
+        _stream_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 
 # ---------------------------------------------------------------------------
 # Routes – Videos
@@ -314,6 +348,31 @@ async def api_exam(code: str):
 # Routes – Admin config
 # ---------------------------------------------------------------------------
 
+@router.post("/api/tts")
+async def proxy_tts(text: str = Form(...), voice: str = Form("alba")):
+    config = _load_json(_UNMUTE_DIR / "config.json", {})
+    tts_url = config.get("tts", {}).get("url", "http://localhost:8089/tts")
+    print(f"[Proxy TTS] voice={voice} text={text[:50]}... -> {tts_url}")
+
+    def fetch_tts():
+        return requests.post(tts_url, data={"text": text, "voice_url": voice}, stream=True)
+
+    try:
+        response = await asyncio.to_thread(fetch_tts)
+        if response.status_code == 200:
+            return StreamingResponse(
+                response.iter_content(chunk_size=8192),
+                media_type="audio/wav"
+            )
+        else:
+            print(f"[Proxy TTS] Error Body: {response.text}")
+            raise HTTPException(status_code=response.status_code, detail="Configured TTS Server Error")
+    except Exception as e:
+        logger.error(f"TTS Proxy request failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to connect to TTS server")
+
+
+
 @router.get("/api/admin/config")
 async def api_admin_config_get():
     return _admin_config
@@ -324,3 +383,4 @@ async def api_admin_config_put(body: AdminConfigUpdate):
     for key, value in body.model_dump(exclude_none=True).items():
         _admin_config[key] = value
     return _admin_config
+

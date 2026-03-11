@@ -1,20 +1,10 @@
 {
-    "stt": {
-        "ip": "localhost",
-        "port": 8090,
-        "endpoint": "/api/asr-streaming",
-        "protocol": "ws"
-    },
     "tts": {
-        "ip": "localhost",
-        "port": 8089,
-        "endpoint": "/api/tts_streaming",
-        "protocol": "ws"
+        "provider": "local",
+        "url": "http://localhost:8089/tts"
     },
     "llm": {
-        "ip": "localhost",
-        "port": 8091,
-        "endpoint": "/v1",
-        "protocol": "http"
+        "provider": "gemini",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
     }
 }
