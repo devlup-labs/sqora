@@ -56,14 +56,31 @@ def _init_firebase():
 def verify_token(token: str) -> str | None:
     """
     Verify a Firebase ID token and return the uid.
-    Returns None if verification fails or SDK is not configured (dev mode).
+    Returns the unverified uid if SDK is not configured (dev mode).
     """
     if not _init_firebase():
-        return None  # dev mode — no verification
+        return _unverified_decode(token)
 
     try:
         decoded = _firebase_auth_module.verify_id_token(token)
         return decoded.get("uid")
     except Exception as e:
         logger.warning(f"Token verification failed: {e}")
+        return None
+
+
+def _unverified_decode(token: str) -> str | None:
+    import base64
+    import json
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload = parts[1]
+        padded = payload + "=" * ((4 - len(payload) % 4) % 4)
+        decoded = base64.urlsafe_b64decode(padded)
+        data = json.loads(decoded)
+        return data.get("user_id") or data.get("uid")
+    except Exception as e:
+        logger.warning(f"Dev fallback token decode failed: {e}")
         return None

@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 from google import genai
 
 # Load .env
-_ENV_FILE = Path(__file__).parents[4] / ".env"
-load_dotenv(dotenv_path=_ENV_FILE)
+_ENV_FILE = Path(__file__).parents[3] / ".env"
+load_dotenv(dotenv_path=_ENV_FILE, override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,7 @@ class LLMService:
         # Rough estimate: 1 token ~= 4 chars for English-heavy text.
         return max(1, (len(text) + 3) // 4)
 
+    # pyre-ignore[11]
     def _estimate_messages_tokens(self, messages: List[Dict[str, Any]]) -> int:
         total = 2
         for message in messages:
@@ -152,6 +153,7 @@ class LLMService:
             parts = cast(List[Dict[str, Any]], message.get("parts", []))
             if parts and isinstance(parts, list) and len(parts) > 0:
                 text = str(parts[0].get("text", ""))
+                # pyre-ignore[16]
                 total += self._estimate_text_tokens(text)
         return total
 

@@ -8,9 +8,10 @@ import subprocess
 import requests
 import concurrent.futures
 from dotenv import load_dotenv
-load_dotenv()
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+# Load .env from project root
+load_dotenv(dotenv_path=os.path.join(BASE, "..", ".env"), override=True)
 
 # Central user data root location (e.g. /home/yash/SQ/user_data)
 USER_DATA_ROOT = os.path.abspath(os.path.join(BASE, "..", "user_data"))
@@ -516,6 +517,7 @@ def process_job(job_path):
 
             if not found:
                 print(f"WARNING: Could not find rendered video for {lesson_id}")
+                # pyre-ignore[16]
                 print(f"Manim stdout: {result.stdout[-500:]}")
 
         if os.path.exists(job_path):
@@ -633,7 +635,7 @@ def main():
                 if job_path not in active_jobs:
                     active_jobs.add(job_path)
                     
-                    def run_job(path):
+                    def run_job(path: str) -> None:
                         try:
                             process_job(path)
                         except Exception as e:
@@ -641,7 +643,7 @@ def main():
                         finally:
                             active_jobs.discard(path)
                     
-                    executor.submit(run_job, job_path)
+                    executor.submit(run_job, str(job_path))
             time.sleep(2)
 
 if __name__ == "__main__":
