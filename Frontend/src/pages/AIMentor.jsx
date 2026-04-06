@@ -9,6 +9,7 @@ import Header from '../components/Header'
 import { MentorModel } from './MentorModel'
 import { useAppConfig } from '../store/useAppConfig'
 import { useAuth } from '../contexts/AuthContext'
+import { apiFetch } from '../lib/apiFetch'
 import './aimentor.css'
 
 // Strip markdown, LaTeX, and symbols for clean text-to-speech
@@ -77,7 +78,7 @@ function AIMentor() {
     const userId = currentUser.uid
 
     // Optimistic check — if the video is already rendered (cache hit) show it instantly
-    fetch(`/api/users/${userId}/videos/${activeVideoId}/status`)
+    apiFetch(`/api/users/${userId}/videos/${activeVideoId}/status`)
       .then((r) => r.json())
       .then((d) => {
         if (d.ready) {
@@ -220,12 +221,10 @@ function AIMentor() {
     ])
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await apiFetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           message: questionText,
-          user_id: userId,
           history: currentHistory
         }),
       })
@@ -244,9 +243,8 @@ function AIMentor() {
       // Save to Server Local API
       if (currentUser) {
         try {
-          fetch(`/api/users/${userId}/chat`, {
+          apiFetch(`/api/users/${userId}/chat`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ history: finalHistory }),
           })
         } catch (e) {
@@ -341,7 +339,7 @@ function AIMentor() {
     const fetchHistory = async () => {
       if (!currentUser) return
       try {
-        const res = await fetch(`/api/users/${currentUser.uid}/chat`)
+        const res = await apiFetch(`/api/users/${currentUser.uid}/chat`)
         const data = await res.json()
         
         if (data.history && data.history.length > 0) {

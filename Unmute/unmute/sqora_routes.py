@@ -11,15 +11,39 @@ import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, File, Form, Request
+from fastapi import APIRouter, HTTPException, File, Form, Request, Depends
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from unmute.llm.llm_service import llm_service
+from unmute.firebase_auth import verify_token
 from pydantic import BaseModel
 import requests
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Per-request auth — extracts uid from Bearer token
+# Falls back to X-User-Id header in dev mode (when no service account)
+# ---------------------------------------------------------------------------
+
+def get_current_uid(request: Request) -> str:
+    """FastAPI dependency: returns the verified Firebase uid for the caller."""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        uid = verify_token(token)
+        if uid:
+            return uid
+        # Token present but invalid
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Dev fallback: allow X-User-Id header when Firebase Admin is not configured
+    dev_uid = request.headers.get("X-User-Id", "")
+    if dev_uid:
+        return dev_uid
+
+    raise HTTPException(status_code=401, detail="Authentication required")
 
 # ---------------------------------------------------------------------------
 # File-based caches (relative to Unmute/ working directory)
@@ -187,8 +211,9 @@ class AuthLogin(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    user_id: str
     history: list = []
+    # user_id removed: now extracted from verified Bearer token
+
 
 class AdminConfigUpdate(BaseModel):
     mentorGreeting: str | None = None
@@ -219,15 +244,16 @@ async def api_login(body: AuthLogin):
 
 # ---------------------------------------------------------------------------
 @router.post("/api/chat")
-async def api_chat(body: ChatRequest):
-    ai_response_cache = get_ai_cache(body.user_id)
+async def api_chat(body: ChatRequest, uid: str = Depends(get_current_uid)):
+    user_id = uid
+    ai_response_cache = get_ai_cache(user_id)
     key = _normalize_prompt(body.message)
     
     # 1. Cache hit – send all at once
     if key in ai_response_cache:
         reply = ai_response_cache[key]
         logger.info(f"AI cache hit: {str(body.message)[:50]}")
-        lesson_id = _create_animation_job(reply, body.user_id, _extract_topic(body.message))
+        lesson_id = _create_animation_job(reply, user_id, _extract_topic(body.message))
         return {"reply": reply, "video_id": lesson_id}
 
     try:
@@ -246,26 +272,31 @@ async def api_chat(body: ChatRequest):
     # 3. Save to cache if valid
     if reply and "AI error" not in reply:
         ai_response_cache[key] = reply
-        save_ai_cache(body.user_id, ai_response_cache)
+        save_ai_cache(user_id, ai_response_cache)
     
     # 4. Create animation job
-    lesson_id = _create_animation_job(reply, body.user_id, _extract_topic(body.message))
+    lesson_id = _create_animation_job(reply, user_id, _extract_topic(body.message))
     return {"reply": reply, "video_id": lesson_id}
 
 
 @router.get("/api/users/{user_id}/chat")
-async def api_chat_history(user_id: str):
+async def api_chat_history(user_id: str, uid: str = Depends(get_current_uid)):
+    if uid != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     return {"history": get_chat_cache(user_id)}
 
 @router.post("/api/users/{user_id}/chat")
-async def api_chat_history_sync(user_id: str, request: Request):
+async def api_chat_history_sync(user_id: str, request: Request, uid: str = Depends(get_current_uid)):
+    if uid != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     data = await request.json()
     save_chat_cache(user_id, data.get("history", []))
     return {"success": True}
 
 
 @router.get("/api/chat/stream")
-async def api_chat_stream(message: str, user_id: str):
+async def api_chat_stream(message: str, request: Request, uid: str = Depends(get_current_uid)):
+    user_id = uid
     """
     SSE streaming endpoint. Yields:
       data: <token>          — one or more raw text tokens
@@ -358,8 +389,18 @@ async def api_video_ready_sse(user_id: str, video_id: str):
     )
 
 
+@router.get("/api/users/{user_id}/videos/{video_id}/status")
+async def api_video_status(user_id: str, video_id: str, uid: str = Depends(get_current_uid)):
+    if uid != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
+    return {"ready": path.exists()}
+
+
 @router.get("/api/users/{user_id}/videos/{video_id}")
-async def api_video(user_id: str, video_id: str, request: Request):
+async def api_video(user_id: str, video_id: str, request: Request, uid: str = Depends(get_current_uid)):
+    if uid != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     """Byte-range streaming endpoint so browsers can seek and start playing immediately."""
     path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
     if not path.exists():
