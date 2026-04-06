@@ -46,6 +46,8 @@ ai_response_cache.json
 video_cache.json
 recordings/
 debug/
+user_data/
+
 
 # Docker and Infrastructure
 volumes/
