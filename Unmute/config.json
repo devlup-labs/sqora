@@ -5,6 +5,16 @@
     },
     "llm": {
         "provider": "gemini",
-        "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model": "gemini-2.5-flash",
+        "context_compaction": {
+            "enabled": true,
+            "max_context_tokens": 7000,
+            "trigger_tokens": 5800,
+            "target_summary_tokens": 1200,
+            "keep_recent_messages": 8,
+            "model": "gemini-2.5-flash",
+            "state_file": "chat_compaction_state.json"
+        }
     }
 }

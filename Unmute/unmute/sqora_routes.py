@@ -85,7 +85,7 @@ def _create_animation_job(response_text: str, topic: str = "Lesson") -> str:
     global video_cache
     key = _normalize_prompt(response_text)
     if key in video_cache:
-        logger.info(f"Video cache hit for: {response_text[:50]}")
+        logger.info(f"Video cache hit for: {str(response_text)[:50]}")
         return video_cache[key]
 
     lesson_id = str(uuid.uuid4())
@@ -152,10 +152,13 @@ def _get_exam(code: str) -> dict:
     else:
         cfg = {"subjects": ["Physics", "Chemistry", "Mathematics"], "qPerSubject": 25, "totalQ": 75}
 
+    subjects: list[str] = cfg["subjects"] # type: ignore
+    q_per_subj: int = cfg["qPerSubject"] # type: ignore
+
     questions = []
-    for si, subj in enumerate(cfg["subjects"]):
-        for qi in range(cfg["qPerSubject"]):
-            q_num = si * cfg["qPerSubject"] + qi + 1
+    for si, subj in enumerate(subjects):
+        for qi in range(q_per_subj):
+            q_num = si * q_per_subj + qi + 1
             questions.append({
                 "number": q_num, "subject": subj,
                 "text": f"[{subj} Q{qi+1}] Which of the following best describes the concept?",
@@ -193,7 +196,7 @@ class AdminConfigUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes – Auth
 # ---------------------------------------------------------------------------
-print("AVAILABLE METHODS:", dir(llm_service))
+
 @router.post("/api/auth/signup")
 async def api_signup(body: AuthSignup):
     if body.email in _users_db:
@@ -207,52 +210,46 @@ async def api_login(body: AuthLogin):
     user = _users_db.get(body.email)
     if not user or user["password"] != body.password:
         raise HTTPException(status_code=401, detail="Invalid email or password.")
-    return {"token": "demo-token", "role": user["role"]}
+    return JSONResponse({"token": "demo-token", "role": user["role"]})
 
 # ---------------------------------------------------------------------------
 @router.post("/api/chat")
-
 async def api_chat(body: ChatRequest):
-    print("🔥 STEP 1: API HIT")
-
     global ai_response_cache
-
+    
     key = _normalize_prompt(body.message)
+    
+    # 1. Cache hit – send all at once
+    if key in ai_response_cache:
+        reply = ai_response_cache[key]
+        logger.info(f"AI cache hit: {str(body.message)[:50]}")
+        lesson_id = _create_animation_job(reply, _extract_topic(body.message))
+        _append_to_chat_history("user", body.message, video_id=lesson_id)
+        _append_to_chat_history("assistant", reply)
+        return {"reply": reply, "video_id": lesson_id}
 
     try:
-        print("🔥 STEP 2: CALLING LLM")
-
-        # 🔥 Timeout wrapper (IMPORTANT)
+        # 2. Call LLM with timeout
         reply = await asyncio.wait_for(
             llm_service.get_response(body.message, chat_history),
-            timeout=25  # 10 sec max
+            timeout=25
         )
-
-        print("🔥 STEP 3: LLM RESPONSE:", reply)
-
     except asyncio.TimeoutError:
-        print("❌ TIMEOUT: Gemini too slow")
-        reply = "Sorry, AI is taking too long. Try again."
-
+        logger.error("TIMEOUT: Gemini response taking too long")
+        reply = "Sorry, AI is taking too long. Please try again."
     except Exception as e:
-        import traceback
-        print("❌ FULL ERROR:")
-        traceback.print_exc()
-        reply = f"AI error: {str(e)}"
+        logger.error(f"LLM Error: {e}")
+        reply = f"AI error occurred: {str(e)}"
 
-    # 🔥 Prevent bad caching
-    if reply and reply not in ["No response generated.", "AI error occurred."]:
+    # 3. Save to cache if valid
+    if reply and "AI error" not in reply:
         ai_response_cache[key] = reply
         _save_json(AI_RESPONSE_CACHE_FILE, ai_response_cache)
-
-    print("🔥 STEP 4: CREATING VIDEO JOB")
-
+    
+    # 4. Create animation job and record history
     lesson_id = _create_animation_job(reply, _extract_topic(body.message))
-
     _append_to_chat_history("user", body.message, video_id=lesson_id)
     _append_to_chat_history("assistant", reply)
-
-    print("🔥 STEP 5: RETURNING RESPONSE")
 
     return {"reply": reply, "video_id": lesson_id}
 
@@ -269,8 +266,6 @@ async def api_chat_stream(message: str):
       data: <token>          — one or more raw text tokens
       data: [DONE] <json>   — final event with full reply + video_id
     """
-    from fastapi.responses import StreamingResponse as _SR
-
     key = _normalize_prompt(message)
 
     # Cache hit – send all at once but still as SSE
@@ -283,7 +278,7 @@ async def api_chat_stream(message: str):
         async def _cached_gen():
             yield f"data: {json.dumps({'token': cached})}\n\n"
             yield f"data: [DONE] {json.dumps({'video_id': lesson_id, 'reply': cached})}\n\n"
-        return _SR(_cached_gen(), media_type="text/event-stream")
+        return StreamingResponse(_cached_gen(), media_type="text/event-stream")
 
     # Streaming from Gemini
     async def _stream_gen():
@@ -323,7 +318,7 @@ async def api_chat_stream(message: str):
 
         yield f"data: [DONE] {json.dumps({'video_id': lesson_id, 'reply': reply})}\n\n"
 
-    return _SR(
+    return StreamingResponse(
         _stream_gen(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -424,9 +419,9 @@ async def api_exam(code: str):
 
 @router.post("/api/tts")
 async def proxy_tts(text: str = Form(...), voice: str = Form("alba")):
-    config = _load_json(_UNMUTE_DIR / "config.json", {})
-    tts_url = config.get("tts", {}).get("url", "http://localhost:8089/tts")
-    print(f"[Proxy TTS] voice={voice} text={text[:50]}... -> {tts_url}")
+    config = _load_json(str(_UNMUTE_DIR / "config.json"), {})
+    tts_url: str = config.get("tts", {}).get("url", "http://localhost:8089/tts")
+    logger.info(f"[Proxy TTS] voice={voice} text={str(text)[:50]}... -> {tts_url}")
 
     def fetch_tts():
         return requests.post(tts_url, data={"text": text, "voice_url": voice}, stream=True)
@@ -439,7 +434,7 @@ async def proxy_tts(text: str = Form(...), voice: str = Form("alba")):
                 media_type="audio/wav"
             )
         else:
-            print(f"[Proxy TTS] Error Body: {response.text}")
+            logger.error(f"[Proxy TTS] Error Body: {str(response.text)}")
             raise HTTPException(status_code=response.status_code, detail="Configured TTS Server Error")
     except Exception as e:
         logger.error(f"TTS Proxy request failed: {e}")
@@ -455,4 +450,3 @@ async def api_admin_config_put(body: AdminConfigUpdate):
     for key, value in body.model_dump(exclude_none=True).items():
         _admin_config[key] = value
     return _admin_config
-
