@@ -7,100 +7,53 @@ SQORA is an AI-powered competitive exam preparation platform for JEE/NEET aspira
 | Feature | Description |
 |---------|-------------|
 | AI Mentor | Chat with a Gemini-powered tutor that explains concepts, solves doubts, and maintains context across turns |
-| Manim Animations | AI explanations can trigger auto-generated animated videos rendered with [Manim](https://www.manim.community/) |
+| Manim Animations | AI explanations trigger auto-generated animated videos rendered with [Manim](https://www.manim.community/) |
 | Mock Exams | Take timed exams with auto-grading and review |
 | Contest Arena | Browse upcoming and past contests with scheduling and registration support |
-| Streaming Responses | Low-latency AI chat with streaming responses |
+| Streaming Responses | Low-latency AI chat with SSE streaming |
 | Context Compaction | Rolling Gemini-based context summarization keeps long chats cheap while preserving full visible history |
 | Text-to-Speech | Local TTS server delivers narrated audio explanations |
 | Admin Panel | Configure mentor greetings, voice settings, exam highlights, and platform options |
-| 3D Landing Page | React Three Fiber-powered landing page |
+| 3D Landing Page | React Three Fiber-powered interactive landing page |
+| Google Auth | Firebase-based Google Sign-In — no passwords needed |
+| Multi-User Support | Each user gets a fully isolated folder on the server for chat history, video cache, and rendered animations |
+| Token Auth | Firebase ID tokens verified server-side — no user can access another user's data |
 
 ## Architecture
 
-The platform is composed of four independent services that communicate through WebSockets, HTTP, and a file-based job queue:
+The platform is composed of four independent services:
 
 | Service | Stack | Location |
 |---------|-------|----------|
-| Frontend | React 18, Vite, React Router, Three.js, KaTeX | `Frontend/` + root config |
+| Frontend | React 18, Vite, React Router, Three.js, KaTeX | `Frontend/` |
 | Backend | FastAPI, Gemini, Prometheus | `Unmute/` |
 | Manim Worker | Python, Manim 0.19, Gemini code generation | `manim/` |
 | TTS Server | Python (Pocket-TTS) | `Unmute/unmute/tts/` |
 
 ```text
-Frontend (5173)  <-->  Backend (8000)  <-->  Manim Worker
-                           |
-                           +--> TTS Server (8089)
+Browser  ──(Firebase Auth)──▶  Google
+   │
+   │  Bearer Token (JWT)
+   ▼
+Frontend (5173)  ◀──▶  Backend (8000)  ◀──▶  Manim Worker
+                            │
+                            └──▶  TTS Server (8089)
 ```
 
-<<<<<<< HEAD
-=======
-### 2. Setup Python Environment (Backend & Manim)
-From the project root (`/home/yash/SQ`):
-```bash
-# Create the virtual environment
-python3 -m venv .venv
+### User Data Architecture
 
-# Activate it
-source .venv/bin/activate
-
-# Install all unified dependencies
-pip install -r requirements.txt
-```
-
-## Running the Application Locally
-
-You will need to open **three separate terminals** to run all services simultaneously.
-
-### Terminal 1: Frontend Server
-```bash
-cd /home/sqora
-npm run dev
-```
-*(Available at `http://localhost:5173`)*
-
-### Terminal 2: Backend (WebSocket AI Engine)
-
-```bash
-cd /home/raid/sqora
-source .venv/bin/activate
-
-# Run FastAPI using module path (recommended)
-PYTHONPATH=sqora/Unmute fastapi dev sqora/Unmute/unmute/main_websocket.py
-```
-
-*(Runs the FastAPI app reloading on `127.0.0.1:8000`)*
-
-### Terminal 3: Manim Worker
-```bash
-cd /sqora/sqora/manim
-source ../.venv/bin/activate
-python worker.py
-```
-*(Starts the renderer worker polling for new scenes to generate)*
-
->>>>>>> 04028c2 (docs: update README, testing guide, and dependencies)
-## Directory Overview
+All user data is stored locally on the server, isolated per user:
 
 ```text
-sqora/
-├── Frontend/              # React SPA
-├── Unmute/                # FastAPI backend
-│   └── unmute/
-│       ├── llm/           # Gemini LLM integration
-│       ├── tts/           # Text-to-speech server
-│       ├── sqora_routes.py
-│       ├── main_websocket.py
-│       ├── quest_manager.py
-│       └── metrics.py
-├── manim/                 # Animation rendering worker
-├── start_backend.sh       # Launch backend server
-├── start_manim.sh         # Launch Manim worker
-├── start_tts.sh           # Launch TTS server
-├── requirements.txt       # Unified Python dependencies
-├── package.json           # Frontend dependencies
-└── vite.config.js         # Vite configuration
+user_data/
+└── {firebase_uid}/
+    ├── chat_history.json     # Persistent chat messages
+    ├── ai_cache.json         # Cached AI responses
+    ├── video_cache.json      # Video ID lookup cache
+    └── rendered_videos/      # Generated Manim MP4 files
 ```
+
+Manim worker monitors `user_data/*/incoming_jobs/` and renders animations for all users in parallel.
 
 ## Getting Started
 
@@ -108,140 +61,177 @@ sqora/
 
 - Node.js 18 or newer
 - Python 3.12 or newer
-- ffmpeg for Manim rendering
+- ffmpeg (required by Manim)
 
-### 1. Install Dependencies
-
-From the project root:
+### 1. Clone and Install Dependencies
 
 ```bash
+git clone https://github.com/devlup-labs/sqora.git
+cd sqora
 npm install
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Run the Application
+### 2. Configure Environment Variables
 
-Open four terminals and run the following commands from the project root:
+Copy the example and fill in your values:
+
+```bash
+cp .env.example .env   # if available, or create .env manually
+```
+
+Required variables in `.env`:
+
+```env
+GEMINI_API_KEY=your_gemini_api_key
+
+# Firebase (client-side) — get from Firebase Console > Project Settings > General
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_STORAGE_BUCKET=...
+VITE_FIREBASE_MESSAGING_SENDER_ID=...
+VITE_FIREBASE_APP_ID=...
+VITE_FIREBASE_MEASUREMENT_ID=...
+```
+
+### 3. Run the Application
+
+Open four terminals from the project root:
 
 ```bash
 # Terminal 1: Frontend
 npm run dev
 
-# Terminal 2: Backend
+# Terminal 2: Backend API
 ./start_backend.sh
 
-# Terminal 3: Manim Worker
+# Terminal 3: Manim Animation Worker
 ./start_manim.sh
 
-# Terminal 4: Pocket-TTS Server
+# Terminal 4: TTS Server (optional)
 ./start_tts.sh
 ```
 
-Frontend runs at `http://localhost:5173`, backend at `http://localhost:8000`, and TTS at `http://localhost:8089`.
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000`
+- TTS: `http://localhost:8089`
 
-If port `8089` is already in use, `start_tts.sh` reuses the existing Pocket-TTS server instead of starting a duplicate.
+## Authentication
 
-### Optional: Run the Backend Manually
+Authentication is handled entirely by **Firebase Google Sign-In** — no passwords or local user database.
 
-If you want to launch the backend directly instead of using the script:
+- Users sign in with their Google account
+- Firebase issues a short-lived JWT (ID token) on login
+- Every API request carries this token in the `Authorization: Bearer <token>` header
+- The backend verifies the token using the Firebase Admin SDK and extracts the user's `uid`
+- All data (chat, videos) is stored under `user_data/{uid}/` — users can only access their own data
+
+### Enabling Full Token Verification (Production)
+
+In development, the backend falls back to accepting an `X-User-Id` header if no service account is configured. To enable cryptographic token verification in production:
+
+1. Firebase Console → `sqora-devlups` → Project Settings → **Service Accounts**
+2. Click **"Generate new private key"** and download the JSON
+3. Save it as `Unmute/firebase-service-account.json`  
+   ⚠️ **Never commit this file — it is in `.gitignore`**
+4. Run: `pip install firebase-admin`
+5. Restart the backend server
+
+## API Reference
+
+All chat and user endpoints require `Authorization: Bearer <firebase_id_token>`.
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/chat` | ✅ | Send a message, get AI reply + video_id |
+| `GET` | `/api/chat/stream?message=...` | ✅ | SSE stream of AI response tokens |
+| `GET` | `/api/users/{uid}/chat` | ✅ | Fetch user's chat history |
+| `POST` | `/api/users/{uid}/chat` | ✅ | Save chat history |
+| `GET` | `/api/users/{uid}/videos/{id}/status` | ✅ | Check if a video is rendered |
+| `GET` | `/api/users/{uid}/videos/{id}` | ✅ | Stream a rendered `.mp4` (byte-range) |
+| `GET` | `/api/contests` | — | List contests |
+| `GET` | `/api/exams/{code}` | — | Fetch exam questions |
+| `GET/PUT` | `/api/admin/config` | — | Read/update platform settings |
+| `POST` | `/api/tts` | — | TTS proxy (form: text, voice) |
+
+## Deployment on IITJ RAID Server (No Vercel Required)
+
+The entire stack can be self-hosted behind Nginx. No cloud hosting needed.
+
+### 1. Build the Frontend
 
 ```bash
-cd Unmute
-source ../.venv/bin/activate
-uvicorn unmute.main_websocket:app --reload --port 8000 --app-dir .
+cd Frontend && npm run build   # outputs to Frontend/dist/
 ```
 
-## API Highlights
+### 2. Configure Nginx
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/signup` | Register a new user |
-| `POST` | `/api/login` | Authenticate and receive a token |
-| `POST` | `/api/chat` | Send a message and get an AI response |
-| `GET` | `/api/chat/stream?message=...` | Stream AI tokens over SSE |
-| `GET` | `/api/chat/history` | Retrieve chat history |
-| `GET` | `/api/video/{id}/status` | Check whether a video is ready |
-| `GET` | `/api/video/{id}` | Stream a rendered `.mp4` |
-| `GET` | `/api/contests` | List contests |
-| `GET` | `/api/exam/{code}` | Fetch exam questions |
-| `POST` | `/api/exam/{code}/submit` | Submit answers and get a score |
-| `GET/PUT` | `/api/admin/config` | Read and update platform settings |
+```nginx
+server {
+    listen 80;
+    server_name your-ip-or-domain;
+
+    # Serve the built React SPA
+    location / {
+        root /path/to/sqora/Frontend/dist;
+        try_files $uri /index.html;
+    }
+
+    # Proxy all API calls to the FastAPI backend
+    location /api/ {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # For SSE (streaming)
+        proxy_buffering off;
+        proxy_cache off;
+    }
+}
+```
+
+### 3. Enable HTTPS (optional but recommended)
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+```
+
+### 4. Add Domain to Firebase
+
+Firebase Console → Authentication → **Authorized Domains** → add your server's IP or domain.
+
+### 5. Run Services in Background
+
+```bash
+nohup ./start_backend.sh &
+nohup ./start_manim.sh &
+nohup ./start_tts.sh &
+```
+
+Or use `systemd` / `tmux` / `screen` for persistent background services.
 
 ## LLM Context Compaction
 
-Long conversations are compacted before sending context to Gemini (OpenAI-compatible endpoint):
+Long conversations are compacted automatically before sending to Gemini:
 
-1. Full chat history is still stored and returned to the UI.
-2. The LLM receives compacted memory + unsummarized recent turns + the new user message.
-3. When estimated context reaches `trigger_tokens`, the service summarizes old context into a new compacted memory block.
-4. If still too large, it compacts again so requests stay under `max_context_tokens`.
-
-Configure this in [Unmute/config.json](Unmute/config.json) under `llm.context_compaction`.
-
-### Backend-only Manual Test (No Manim)
-
-Use this flow to validate compaction without starting the Manim worker:
-
-1. Start only the backend:
-
-```bash
-./start_backend.sh
-```
-
-2. Send a baseline chat request:
-
-```bash
-curl -sS -X POST http://127.0.0.1:8000/api/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"Explain Newton\u0027s second law in two lines."}'
-```
-
-3. Send larger prompts to trigger compaction:
-
-```bash
-python - <<'PY'
-import json, urllib.request
-
-url = 'http://127.0.0.1:8000/api/chat'
-for i in range(5):
-    payload = {
-        'message': f'Compaction test turn {i+1}. Keep the answer short. ' + ('context ' * 500)
-    }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json'},
-        method='POST',
-    )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        body = json.loads(resp.read().decode('utf-8'))
-        print(f"turn={i+1} reply_chars={len(body.get('reply', ''))}")
-PY
-```
-
-4. Inspect compaction state:
-
-```bash
-cat Unmute/chat_compaction_state.json
-```
-
-5. Confirm user-visible history is still full:
-
-```bash
-curl -sS http://127.0.0.1:8000/api/chat | python -m json.tool
-```
+1. Full chat history is always stored locally and shown in the UI
+2. The LLM receives: compacted memory + recent uncompacted turns + new message
+3. When estimated token count reaches `trigger_tokens`, old context is summarized
+4. Configure in `Unmute/config.json` under `llm.context_compaction`
 
 ## Tech Stack
 
-Frontend: React 18, Vite, React Router, Three.js / React Three Fiber, KaTeX, react-markdown
-
-Backend: FastAPI, Google Gemini, Prometheus, Redis, msgpack
-
-Animation: Manim 0.19, Gemini code generation
-
-TTS: Pocket-TTS
+| Layer | Technologies |
+|-------|-------------|
+| Frontend | React 18, Vite, React Router, Three.js / React Three Fiber, KaTeX, react-markdown |
+| Backend | FastAPI, Google Gemini (new `google-genai` SDK), Firebase Admin SDK |
+| Animation | Manim 0.19, Gemini code generation, ffmpeg |
+| Auth | Firebase Authentication (Google Sign-In) |
+| TTS | Pocket-TTS |
 
 ## License
 
