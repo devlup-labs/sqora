@@ -4,6 +4,7 @@ import logging
 import asyncio
 from pathlib import Path
 
+from typing import Any, List, Tuple, Union, Dict, cast
 from dotenv import load_dotenv
 from google import genai
 
@@ -144,11 +145,14 @@ class LLMService:
         # Rough estimate: 1 token ~= 4 chars for English-heavy text.
         return max(1, (len(text) + 3) // 4)
 
-    def _estimate_messages_tokens(self, messages: list[dict]) -> int:
+    def _estimate_messages_tokens(self, messages: List[Dict[str, Any]]) -> int:
         total = 2
         for message in messages:
             total += 4
-            total += self._estimate_text_tokens(str(message.get("parts", [{}])[0].get("text", "")))
+            parts = cast(List[Dict[str, Any]], message.get("parts", []))
+            if parts and isinstance(parts, list) and len(parts) > 0:
+                text = str(parts[0].get("text", ""))
+                total += self._estimate_text_tokens(text)
         return total
 
     def _load_compaction_state(self):
@@ -180,18 +184,19 @@ class LLMService:
         except Exception as e:
             logger.error(f"Failed to save context compaction state: {e}")
 
-    def _sync_state_with_history(self, chat_history: list):
+    def _sync_state_with_history(self, chat_history: List[Any]):
         if self._compacted_upto > len(chat_history):
             logger.info("Chat history appears reset. Clearing compaction state.")
             self._compacted_context = ""
             self._compacted_upto = 0
             self._save_compaction_state()
 
-    def _pending_entries(self, chat_history: list) -> list[tuple[int, str, str]]:
-        start = min(max(self._compacted_upto, 0), len(chat_history))
-        pending: list[tuple[int, str, str]] = []
+    def _pending_entries(self, chat_history: List[Any]) -> List[Tuple[int, str, str]]:
+        history_len = len(chat_history)
+        start = min(max(self._compacted_upto, 0), history_len)
+        pending: List[Tuple[int, str, str]] = []
 
-        for idx in range(start, len(chat_history)):
+        for idx in range(start, history_len):
             msg = chat_history[idx]
             role = self._role_for_llm(str(msg.get("role", "user")))
             text = str(msg.get("text", "")).strip()
@@ -260,8 +265,11 @@ class LLMService:
             return self._fallback_compaction(source)
 
         try:
+            if self.client is None:
+                 return self._fallback_compaction(source)
+                 
             # Use the new SDK for compaction too
-            response = self.client.models.generate_content(
+            response: Any = self.client.models.generate_content(
                 model=self.compaction_model or self.model,
                 contents=[
                     {
@@ -278,7 +286,7 @@ class LLMService:
                 ],
                 config={"temperature": 0, "max_output_tokens": self.compaction_target_summary_tokens}
             )
-            summary = (response.text or "").strip()
+            summary = str(getattr(response, "text", "")).strip()
             if summary:
                 return summary
         except Exception as e:
@@ -350,7 +358,8 @@ class LLMService:
                 {"role": "user", "parts": [{"text": system_content}]},
                 {"role": "model", "parts": [{"text": "Understood. I will act as your tutor."}]}
             ]
-            for m in chat_history[-10:]:
+            recent = chat_history[-10:] if len(chat_history) >= 10 else chat_history
+            for m in recent:
                 role = self._role_for_llm(str(m.get("role", "user")))
                 messages.append({"role": role, "parts": [{"text": str(m.get("text", ""))}]})
             context_data = self.retrieve_context(message)
@@ -392,22 +401,25 @@ class LLMService:
         messages.append({"role": "user", "parts": [{"text": final_text}]})
         return messages
 
-    async def get_response(self, message: str, chat_history: list) -> str:
-        if not self.client:
+    async def get_response(self, message: str, chat_history: List[Any]) -> str:
+        if self.client is None:
             return "AI is not configured. Please check your API key."
         try:
+            # Fix: calling _build_messages which is a method, not a static function
             messages = await asyncio.to_thread(self._build_messages, message, chat_history)
             
             # Using the new SDK
-            response = await asyncio.to_thread(
+            response: Any = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.model,
                 contents=messages,
+                # config is a dict in the new SDK generate_content
                 config={"temperature": 0}
             )
             
-            if hasattr(response, "text") and response.text:
-                return response.text
+            res_text = str(getattr(response, "text", ""))
+            if res_text:
+                return res_text
             return "No response generated."
         except Exception as e:
             logger.error(f"LLM Error: {e}")
