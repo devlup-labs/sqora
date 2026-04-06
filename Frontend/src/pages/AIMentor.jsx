@@ -62,6 +62,13 @@ function AIMentor() {
   const sttRef = useRef(null)                           // SpeechRecognition instance
   const transcriptRef = useRef('')
   const [liveTranscript, setLiveTranscript] = useState('')
+  const [videoToken, setVideoToken] = useState('')
+
+  // Keep a fresh token for video/SSE URLs (refreshed whenever user changes)
+  useEffect(() => {
+    if (!currentUser) return
+    currentUser.getIdToken(false).then(setVideoToken).catch(() => {})
+  }, [currentUser])
 
   // Watch for video readiness via SSE (fires within ~1 s of render finishing)
   useEffect(() => {
@@ -89,19 +96,26 @@ function AIMentor() {
       .catch(() => { })
 
     // SSE stream: server fires "ready" the instant the .mp4 file appears
-    const es = new EventSource(`/api/users/${userId}/videos/${activeVideoId}/ready`)
-    pollingRef.current = es
-
-    es.onmessage = (e) => {
-      if (e.data === 'ready') {
-        setVideoReady(true)
-        setVideoPolling(false)
-        es.close()
+    // EventSource can't send headers, so pass token as query param
+    let es
+    const startSSE = async () => {
+      try {
+        const token = currentUser ? await currentUser.getIdToken(false) : ''
+        es = new EventSource(`/api/users/${userId}/videos/${activeVideoId}/ready?token=${encodeURIComponent(token)}`)
+        pollingRef.current = es
+        es.onmessage = (e) => {
+          if (e.data === 'ready') {
+            setVideoReady(true)
+            setVideoPolling(false)
+            es.close()
+          }
+        }
+        es.onerror = () => es.close()
+      } catch (err) {
+        console.warn('SSE setup failed:', err)
       }
     }
-    es.onerror = () => es.close()
-
-    return () => es.close()
+    startSSE()
   }, [activeVideoId, currentUser])
 
   // Auto-play video when ready
@@ -432,7 +446,7 @@ function AIMentor() {
                 className="mentor-video-player"
                 controls
                 autoPlay
-                src={`/api/users/${currentUser.uid}/videos/${activeVideoId}`}
+                src={`/api/users/${currentUser.uid}/videos/${activeVideoId}${videoToken ? `?token=${encodeURIComponent(videoToken)}` : ''}`}
               />
             )}
           </div>

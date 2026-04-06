@@ -362,15 +362,29 @@ async def api_chat_stream(message: str, request: Request, uid: str = Depends(get
 # ---------------------------------------------------------------------------
 
 @router.get("/api/users/{user_id}/videos/{video_id}/status")
-async def api_video_status(user_id: str, video_id: str):
+async def api_video_status(user_id: str, video_id: str, uid: str = Depends(get_current_uid)):
+    if uid != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
-    ready = path.exists()
-    return {"ready": ready}
+    return {"ready": path.exists()}
 
 
 @router.get("/api/users/{user_id}/videos/{video_id}/ready")
-async def api_video_ready_sse(user_id: str, video_id: str):
-    """SSE endpoint: holds open until the mp4 exists, then fires 'ready'."""
+async def api_video_ready_sse(user_id: str, video_id: str, request: Request, token: str = ""):
+    """SSE endpoint: holds open until the mp4 exists, then fires 'ready'.
+    Accepts auth via Bearer header OR ?token= query param (needed for EventSource).
+    """
+    from unmute.firebase_auth import verify_token, _unverified_decode
+    # Auth: prefer header, fall back to query param for EventSource clients
+    auth_header = request.headers.get("Authorization", "")
+    raw_token = auth_header[7:] if auth_header.startswith("Bearer ") else token
+    uid = verify_token(raw_token) if raw_token else None
+    if not uid:
+        uid = request.headers.get("X-User-Id", "")
+    if not uid or uid != user_id:
+        from fastapi.responses import Response
+        return Response(status_code=401)
+
     path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
 
     async def _watch():
@@ -389,19 +403,18 @@ async def api_video_ready_sse(user_id: str, video_id: str):
     )
 
 
-@router.get("/api/users/{user_id}/videos/{video_id}/status")
-async def api_video_status(user_id: str, video_id: str, uid: str = Depends(get_current_uid)):
-    if uid != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-    path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
-    return {"ready": path.exists()}
-
-
 @router.get("/api/users/{user_id}/videos/{video_id}")
-async def api_video(user_id: str, video_id: str, request: Request, uid: str = Depends(get_current_uid)):
-    if uid != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-    """Byte-range streaming endpoint so browsers can seek and start playing immediately."""
+async def api_video(user_id: str, video_id: str, request: Request, token: str = ""):
+    """Byte-range streaming endpoint. Accepts auth via Bearer header or ?token= query param."""
+    # Auth: header preferred, fallback to query param (needed for <video> src)
+    auth_header = request.headers.get("Authorization", "")
+    raw_token = auth_header[7:] if auth_header.startswith("Bearer ") else token
+    from unmute.firebase_auth import verify_token
+    uid = verify_token(raw_token) if raw_token else None
+    if not uid:
+        uid = request.headers.get("X-User-Id", "")
+    if not uid or uid != user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
     path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Video not found or still rendering.")
