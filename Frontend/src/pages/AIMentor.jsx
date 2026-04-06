@@ -8,6 +8,9 @@ import 'katex/dist/katex.min.css'
 import Header from '../components/Header'
 import { MentorModel } from './MentorModel'
 import { useAppConfig } from '../store/useAppConfig'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { db } from '../lib/firebase'
+import { useAuth } from '../contexts/AuthContext'
 import './aimentor.css'
 
 // Strip markdown, LaTeX, and symbols for clean text-to-speech
@@ -38,15 +41,14 @@ function AIMentor() {
   const [lastQuestion, setLastQuestion] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
   const [isChatOpen, setIsChatOpen] = useState(false)
-  const [chatInput, setChatInput] = useState('')
+  const chatInputRef = useRef(null)
   const { mentorGreeting, voiceEnabled } = useAppConfig()
+  const { currentUser } = useAuth()
+  
+  const initialGreeting = mentorGreeting || 'Hi! I am your AI mentor. Tap the mic or open chat to ask anything about your prep.'
+  
   const [chatMessages, setChatMessages] = useState(() => [
-    {
-      role: 'assistant',
-      text:
-        mentorGreeting ||
-        'Hi! I am your AI mentor. Tap the mic or open chat to ask anything about your prep.',
-    },
+    { role: 'assistant', text: initialGreeting },
   ])
   const recognitionRef = useRef(null)
   const chatMessagesRef = useRef(null)
@@ -73,8 +75,10 @@ function AIMentor() {
     setVideoReady(false)
     setVideoPolling(true)
 
+    const userId = currentUser ? currentUser.uid : "guest"
+
     // Optimistic check — if the video is already rendered (cache hit) show it instantly
-    fetch(`/api/videos/${activeVideoId}/status`)
+    fetch(`/api/users/${userId}/videos/${activeVideoId}/status`)
       .then((r) => r.json())
       .then((d) => {
         if (d.ready) {
@@ -85,7 +89,7 @@ function AIMentor() {
       .catch(() => { })
 
     // SSE stream: server fires "ready" the instant the .mp4 file appears
-    const es = new EventSource(`/api/videos/${activeVideoId}/ready`)
+    const es = new EventSource(`/api/users/${userId}/videos/${activeVideoId}/ready`)
     pollingRef.current = es
 
     es.onmessage = (e) => {
@@ -98,7 +102,7 @@ function AIMentor() {
     es.onerror = () => es.close()
 
     return () => es.close()
-  }, [activeVideoId])
+  }, [activeVideoId, currentUser])
 
   // Auto-play video when ready
   useEffect(() => {
@@ -206,6 +210,9 @@ function AIMentor() {
 
   // ----- AI Response: show dots while thinking, reveal all at once -----
   const handleAIResponse = async (questionText) => {
+    const userId = currentUser ? currentUser.uid : "guest"
+    const currentHistory = [...chatMessages]
+    
     setChatMessages((prev) => [
       ...prev,
       { role: 'user', text: questionText },
@@ -216,19 +223,35 @@ function AIMentor() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: questionText }),
+        body: JSON.stringify({ 
+          message: questionText,
+          user_id: userId,
+          history: currentHistory
+        }),
       })
       const data = await res.json()
       const reply = data.reply || 'Sorry, something went wrong.'
       const videoId = data.video_id
 
+      let finalHistory = []
       setChatMessages((prev) => {
         const updated = [...prev]
         updated[updated.length - 1] = { role: 'assistant', text: reply, video_id: videoId }
         updated[updated.length - 2] = { ...updated[updated.length - 2], video_id: videoId }
+        finalHistory = updated
         return updated
       })
       if (videoId) setActiveVideoId(videoId)
+
+      // Save to Firestore if authenticated
+      if (currentUser) {
+        try {
+          const docRef = doc(db, 'users', currentUser.uid, 'chats', 'aimentor')
+          await setDoc(docRef, { history: finalHistory }, { merge: true })
+        } catch (e) {
+          console.error("Failed to save history to Firestore:", e)
+        }
+      }
 
       // Start pipelined TTS (all sentences in parallel, play in order)
       speakTextPipelined(reply)
@@ -264,7 +287,7 @@ function AIMentor() {
 
     const recognition = new SR()
     sttRef.current = recognition
-    recognition.lang = 'en-US'
+    recognition.lang = 'en-IN'
     recognition.continuous = false     // auto-stops after natural pause
     recognition.interimResults = true  // show live partial results
     recognition.maxAlternatives = 1
@@ -315,23 +338,24 @@ function AIMentor() {
 
   useEffect(() => {
     const fetchHistory = async () => {
+      if (!currentUser) return
       try {
-        const res = await fetch('/api/chat')
-        const data = await res.json()
-        if (data.history && data.history.length > 0) {
-          setChatMessages(data.history)
-          // Set the latest video if available
-          const lastWithVideo = [...data.history].reverse().find((m) => m.video_id)
+        const docRef = doc(db, 'users', currentUser.uid, 'chats', 'aimentor')
+        const snap = await getDoc(docRef)
+        if (snap.exists() && snap.data().history) {
+          const history = snap.data().history
+          setChatMessages(history)
+          const lastWithVideo = [...history].reverse().find((m) => m.video_id)
           if (lastWithVideo) {
             setActiveVideoId(lastWithVideo.video_id)
           }
         }
       } catch (err) {
-        console.error('Failed to fetch chat history:', err)
+        console.error('Failed to fetch chat history from Firestore:', err)
       }
     }
     fetchHistory()
-  }, [])
+  }, [currentUser])
 
   const handleMicClick = () => {
     if (isSpeaking) {
@@ -356,9 +380,10 @@ function AIMentor() {
 
 
   const handleChatSend = async () => {
-    const trimmed = chatInput.trim()
+    const val = chatInputRef.current?.value || ''
+    const trimmed = val.trim()
     if (!trimmed) return
-    setChatInput('')
+    if (chatInputRef.current) chatInputRef.current.value = ''
     setLastQuestion(trimmed)
     await handleAIResponse(trimmed)
   }
@@ -406,7 +431,7 @@ function AIMentor() {
                 className="mentor-video-player"
                 controls
                 autoPlay
-                src={`/api/videos/${activeVideoId}`}
+                src={`/api/users/${currentUser ? currentUser.uid : "guest"}/videos/${activeVideoId}`}
               />
             )}
           </div>
@@ -534,10 +559,9 @@ function AIMentor() {
             </div>
             <div className="mentor-chat-input">
               <input
+                ref={chatInputRef}
                 type="text"
                 placeholder="Type your question..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleChatSend()}
               />
               <button type="button" onClick={handleChatSend}>

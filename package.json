@@ -10,6 +10,8 @@
   "dependencies": {
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
+    "firebase": "^12.11.0",
+    "firebase-tools": "^15.13.0",
     "framer-motion": "^12.38.0",
     "hls.js": "^1.6.15",
     "katex": "^0.16.28",
@@ -24,6 +26,6 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^7.3.1"
+    "vite": "^5.4.14"
   }
 }

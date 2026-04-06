@@ -16,3 +16,4 @@ unidecode>=1.4.0
 # Manim Code Generation Worker (from manim/requirements.txt)
 manim==0.19.2
 requests
+google-genai

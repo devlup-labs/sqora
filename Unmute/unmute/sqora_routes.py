@@ -26,14 +26,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 _BASE_DIR = Path(__file__).parents[2]          # SQ/
-_UNMUTE_DIR = Path(__file__).parents[1]         # SQ/Unmute/
-_MANIM_JOBS_DIR = _BASE_DIR / "manim" / "jobs" / "incoming"
-_RENDERED_DIR = _BASE_DIR / "manim" / "media" / "rendered"
-
-CHAT_HISTORY_FILE = str(_UNMUTE_DIR / "chat_history.json")
-VIDEO_CACHE_FILE = str(_UNMUTE_DIR / "video_cache.json")
-AI_RESPONSE_CACHE_FILE = str(_UNMUTE_DIR / "ai_response_cache.json")
-
+USER_DATA_ROOT = _BASE_DIR / "user_data"
 
 def _load_json(path: str, default):
     if os.path.exists(path):
@@ -44,7 +37,6 @@ def _load_json(path: str, default):
             logger.error(f"Error loading {path}: {e}")
     return default
 
-
 def _save_json(path: str, data):
     try:
         with open(path, "w") as f:
@@ -52,10 +44,22 @@ def _save_json(path: str, data):
     except Exception as e:
         logger.error(f"Error saving {path}: {e}")
 
+def get_user_dir(user_id: str) -> Path:
+    d = USER_DATA_ROOT / str(user_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
-chat_history: list = _load_json(CHAT_HISTORY_FILE, [])
-video_cache: dict = _load_json(VIDEO_CACHE_FILE, {})
-ai_response_cache: dict = _load_json(AI_RESPONSE_CACHE_FILE, {})
+def get_video_cache(user_id: str) -> dict:
+    return _load_json(str(get_user_dir(user_id) / "video_cache.json"), {})
+
+def save_video_cache(user_id: str, cache: dict):
+    _save_json(str(get_user_dir(user_id) / "video_cache.json"), cache)
+
+def get_ai_cache(user_id: str) -> dict:
+    return _load_json(str(get_user_dir(user_id) / "ai_cache.json"), {})
+
+def save_ai_cache(user_id: str, cache: dict):
+    _save_json(str(get_user_dir(user_id) / "ai_cache.json"), cache)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,30 +85,23 @@ def _extract_topic(text: str) -> str:
     return "JEE/NEET Lesson"
 
 
-def _create_animation_job(response_text: str, topic: str = "Lesson") -> str:
-    global video_cache
+def _create_animation_job(response_text: str, user_id: str, topic: str = "Lesson") -> str:
+    cache = get_video_cache(user_id)
     key = _normalize_prompt(response_text)
-    if key in video_cache:
+    if key in cache:
         logger.info(f"Video cache hit for: {str(response_text)[:50]}")
-        return video_cache[key]
+        return cache[key]
 
     lesson_id = str(uuid.uuid4())
-    _MANIM_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-    _save_json(str(_MANIM_JOBS_DIR / f"{lesson_id}.json"), {"topic": topic, "response_text": response_text})
+    job_dir = get_user_dir(user_id) / "incoming_jobs"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    _save_json(str(job_dir / f"{lesson_id}.json"), {"topic": topic, "response_text": response_text})
 
-    video_cache[key] = lesson_id
-    _save_json(VIDEO_CACHE_FILE, video_cache)
+    cache[key] = lesson_id
+    save_video_cache(user_id, cache)
     logger.info(f"Video cache miss. Created job {lesson_id}")
     return lesson_id
 
-
-def _append_to_chat_history(role: str, text: str, video_id: str | None = None):
-    global chat_history
-    entry: dict = {"role": role, "text": text}
-    if video_id:
-        entry["video_id"] = video_id
-    chat_history.append(entry)
-    _save_json(CHAT_HISTORY_FILE, chat_history)
 
 # ---------------------------------------------------------------------------
 # In-memory stores
@@ -184,6 +181,8 @@ class AuthLogin(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    user_id: str = "guest"
+    history: list = []
 
 class AdminConfigUpdate(BaseModel):
     mentorGreeting: str | None = None
@@ -215,23 +214,20 @@ async def api_login(body: AuthLogin):
 # ---------------------------------------------------------------------------
 @router.post("/api/chat")
 async def api_chat(body: ChatRequest):
-    global ai_response_cache
-    
+    ai_response_cache = get_ai_cache(body.user_id)
     key = _normalize_prompt(body.message)
     
     # 1. Cache hit – send all at once
     if key in ai_response_cache:
         reply = ai_response_cache[key]
         logger.info(f"AI cache hit: {str(body.message)[:50]}")
-        lesson_id = _create_animation_job(reply, _extract_topic(body.message))
-        _append_to_chat_history("user", body.message, video_id=lesson_id)
-        _append_to_chat_history("assistant", reply)
+        lesson_id = _create_animation_job(reply, body.user_id, _extract_topic(body.message))
         return {"reply": reply, "video_id": lesson_id}
 
     try:
         # 2. Call LLM with timeout
         reply = await asyncio.wait_for(
-            llm_service.get_response(body.message, chat_history),
+            llm_service.get_response(body.message, body.history),
             timeout=25
         )
     except asyncio.TimeoutError:
@@ -244,36 +240,32 @@ async def api_chat(body: ChatRequest):
     # 3. Save to cache if valid
     if reply and "AI error" not in reply:
         ai_response_cache[key] = reply
-        _save_json(AI_RESPONSE_CACHE_FILE, ai_response_cache)
+        save_ai_cache(body.user_id, ai_response_cache)
     
-    # 4. Create animation job and record history
-    lesson_id = _create_animation_job(reply, _extract_topic(body.message))
-    _append_to_chat_history("user", body.message, video_id=lesson_id)
-    _append_to_chat_history("assistant", reply)
-
+    # 4. Create animation job
+    lesson_id = _create_animation_job(reply, body.user_id, _extract_topic(body.message))
     return {"reply": reply, "video_id": lesson_id}
 
 
 @router.get("/api/chat")
 async def api_chat_history():
-    return {"history": chat_history}
+    return {"history": []}
 
 
 @router.get("/api/chat/stream")
-async def api_chat_stream(message: str):
+async def api_chat_stream(message: str, user_id: str = "guest"):
     """
     SSE streaming endpoint. Yields:
       data: <token>          — one or more raw text tokens
       data: [DONE] <json>   — final event with full reply + video_id
     """
     key = _normalize_prompt(message)
+    ai_response_cache = get_ai_cache(user_id)
 
     # Cache hit – send all at once but still as SSE
     if key in ai_response_cache:
         cached = ai_response_cache[key]
-        lesson_id = _create_animation_job(cached, _extract_topic(message))
-        _append_to_chat_history("user", message, video_id=lesson_id)
-        _append_to_chat_history("assistant", cached)
+        lesson_id = _create_animation_job(cached, user_id, _extract_topic(message))
 
         async def _cached_gen():
             yield f"data: {json.dumps({'token': cached})}\n\n"
@@ -282,11 +274,10 @@ async def api_chat_stream(message: str):
 
     # Streaming from Gemini
     async def _stream_gen():
-        global ai_response_cache
         full_reply = []
 
         def _iter():
-            return llm_service.stream_response(message, chat_history)
+            return llm_service.stream_response(message, [])
 
         loop = asyncio.get_event_loop()
         q: asyncio.Queue = asyncio.Queue()
@@ -310,11 +301,9 @@ async def api_chat_stream(message: str):
 
         reply = "".join(full_reply)
         ai_response_cache[key] = reply
-        _save_json(AI_RESPONSE_CACHE_FILE, ai_response_cache)
+        save_ai_cache(user_id, ai_response_cache)
 
-        lesson_id = _create_animation_job(reply, _extract_topic(message))
-        _append_to_chat_history("user", message, video_id=lesson_id)
-        _append_to_chat_history("assistant", reply)
+        lesson_id = _create_animation_job(reply, user_id, _extract_topic(message))
 
         yield f"data: [DONE] {json.dumps({'video_id': lesson_id, 'reply': reply})}\n\n"
 
@@ -329,16 +318,17 @@ async def api_chat_stream(message: str):
 # Routes – Videos
 # ---------------------------------------------------------------------------
 
-@router.get("/api/videos/{video_id}/status")
-async def api_video_status(video_id: str):
-    ready = (_RENDERED_DIR / f"{video_id}.mp4").exists()
+@router.get("/api/users/{user_id}/videos/{video_id}/status")
+async def api_video_status(user_id: str, video_id: str):
+    path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
+    ready = path.exists()
     return {"ready": ready}
 
 
-@router.get("/api/videos/{video_id}/ready")
-async def api_video_ready_sse(video_id: str):
+@router.get("/api/users/{user_id}/videos/{video_id}/ready")
+async def api_video_ready_sse(user_id: str, video_id: str):
     """SSE endpoint: holds open until the mp4 exists, then fires 'ready'."""
-    path = _RENDERED_DIR / f"{video_id}.mp4"
+    path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
 
     async def _watch():
         for _ in range(240):          # max ~4 minutes
@@ -356,10 +346,10 @@ async def api_video_ready_sse(video_id: str):
     )
 
 
-@router.get("/api/videos/{video_id}")
-async def api_video(video_id: str, request: Request):
+@router.get("/api/users/{user_id}/videos/{video_id}")
+async def api_video(user_id: str, video_id: str, request: Request):
     """Byte-range streaming endpoint so browsers can seek and start playing immediately."""
-    path = _RENDERED_DIR / f"{video_id}.mp4"
+    path = get_user_dir(user_id) / "rendered_videos" / f"{video_id}.mp4"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Video not found or still rendering.")
 
@@ -419,6 +409,7 @@ async def api_exam(code: str):
 
 @router.post("/api/tts")
 async def proxy_tts(text: str = Form(...), voice: str = Form("alba")):
+    _UNMUTE_DIR = Path(__file__).parents[1]
     config = _load_json(str(_UNMUTE_DIR / "config.json"), {})
     tts_url: str = config.get("tts", {}).get("url", "http://localhost:8089/tts")
     logger.info(f"[Proxy TTS] voice={voice} text={str(text)[:50]}... -> {tts_url}")

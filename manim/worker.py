@@ -1,3 +1,4 @@
+import glob
 import os
 import json
 import re
@@ -10,15 +11,13 @@ load_dotenv()
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-INCOMING = os.path.join(BASE, "jobs/incoming")
-DONE = os.path.join(BASE, "jobs/done")
-FAILED = os.path.join(BASE, "jobs/failed")
-RENDERED = os.path.join(BASE, "media/rendered")
-SCENES_DIR = os.path.join(BASE, "generated_scenes")
+# Central user data root location (e.g. /home/yash/SQ/user_data)
+USER_DATA_ROOT = os.path.abspath(os.path.join(BASE, "..", "user_data"))
+os.makedirs(USER_DATA_ROOT, exist_ok=True)
 
-# Ensure output dirs exist
-for d in [INCOMING, DONE, FAILED, RENDERED, SCENES_DIR]:
-    os.makedirs(d, exist_ok=True)
+# The manim output location (fixed by manim's naming convention)
+MANIM_OUTPUT_DIR = os.path.join(BASE, "media", "videos")
+
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyAzK9NGRsInb_o4TPu5gitqjsiA-Eu8R3U")
 GEMINI_MODEL = "gemini-2.0-flash-lite"
@@ -408,10 +407,22 @@ def _fallback_scene(topic, response_text):
     return '\n'.join(scene_lines)
 
 
-def process_job(job_file):
-    job_path = os.path.join(INCOMING, job_file)
+def process_job(job_path):
+    job_file = os.path.basename(job_path)
     lesson_id = job_file.replace(".json", "")
     job_start = time.time()
+    
+    # job_path is expected to be USER_DATA_ROOT/{user_id}/incoming_jobs/{lesson_id}.json
+    user_dir = os.path.dirname(os.path.dirname(job_path)) 
+    
+    # Setup user-specific directories
+    DONE = os.path.join(user_dir, "done_jobs")
+    FAILED = os.path.join(user_dir, "failed_jobs")
+    RENDERED = os.path.join(user_dir, "rendered_videos")
+    SCENES_DIR = os.path.join(user_dir, "manim_scenes")
+    
+    for d in [DONE, FAILED, RENDERED, SCENES_DIR]:
+        os.makedirs(d, exist_ok=True)
 
     try:
         # Check if video already exists (cache hit from backend)
@@ -547,7 +558,7 @@ def process_job(job_file):
 
         # If still here, try the simple fallback scene
         try:
-            _render_fallback(job_file, job_path, lesson_id, job_data)
+            _render_fallback(job_file, job_path, lesson_id, job_data, user_dir)
         except Exception as e2:
             print(f"Fallback also failed: {e2}")
             shutil.move(job_path, os.path.join(FAILED, job_file))
@@ -558,8 +569,13 @@ def process_job(job_file):
             shutil.move(job_path, os.path.join(FAILED, job_file))
 
 
-def _render_fallback(job_file, job_path, lesson_id, job_data):
+def _render_fallback(job_file, job_path, lesson_id, job_data, user_dir):
     """Attempt rendering with the simple fallback scene."""
+    
+    DONE = os.path.join(user_dir, "done_jobs")
+    RENDERED = os.path.join(user_dir, "rendered_videos")
+    SCENES_DIR = os.path.join(user_dir, "manim_scenes")
+    
     print(f"Retrying {job_file} with fallback scene...")
     topic = job_data.get("topic", "Lesson")
     response_text = job_data.get("response_text", "")
@@ -600,12 +616,16 @@ def main():
     print("Renderer worker started")
     print(f"  Gemini model: {GEMINI_MODEL}")
     print(f"  API key set: {'yes' if GEMINI_API_KEY else 'NO'}")
-    print(f"  Watching: {INCOMING}")
+    print(f"  Watching: {USER_DATA_ROOT}/*/incoming_jobs/")
 
     while True:
-        for file in sorted(os.listdir(INCOMING)):
-            if file.endswith(".json"):
-                process_job(file)
+        # Find all JSON jobs in any user's incoming_jobs folder
+        job_pattern = os.path.join(USER_DATA_ROOT, "*", "incoming_jobs", "*.json")
+        for job_path in glob.glob(job_pattern):
+            try:
+                process_job(job_path)
+            except Exception as e:
+                print(f"Error processing job {job_path}: {e}")
         time.sleep(2)
 
 
