@@ -1,7 +1,18 @@
 import logging
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from unmute.sqora_routes import router as sqora_router
+from dotenv import load_dotenv
+import os
+
+# .env lives two levels up: /home/raid/sqora/.env
+_ENV_FILE = Path(__file__).parents[3] / ".env"
+load_dotenv(dotenv_path=_ENV_FILE)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(

@@ -3,6 +3,7 @@ import math
 from functools import partial
 from logging import getLogger
 from typing import Any, Literal, cast
+from rag_proxy import retrieve
 
 import numpy as np
 import websockets
@@ -41,6 +42,8 @@ from unmute.tts.text_to_speech import (
     TTSClientEosMessage,
     TTSTextMessage,
 )
+# For HeadTTS Integration:
+# from unmute.tts.headtts_client import HeadTTSClient
 
 USER_SILENCE_TIMEOUT = 7.0
 FIRST_MESSAGE_TEMPERATURE = 0
@@ -111,11 +114,12 @@ class UnmuteHandler(AsyncStreamHandler):
 
     @property
     def tts(self) -> TextToSpeech | None:
+        # To use HeadTTS, change return type to HeadTTSClient | None
         try:
             quest = self.quest_manager.quests["tts"]
         except KeyError:
             return None
-        return cast(Quest[TextToSpeech], quest).get_nowait()
+        return cast(Quest[TextToSpeech], quest).get_nowait() # Change Quest parameter to HeadTTSClient
 
     def get_gradio_update(self):
         self.debug_dict["conversation_state"] = self.chatbot.conversation_state()
@@ -188,6 +192,34 @@ class UnmuteHandler(AsyncStreamHandler):
         )
 
         messages = self.chatbot.preprocessed_messages()
+
+        # Get the latest user message
+        user_query = ""
+        for m in reversed(messages):
+            if m["role"] == "user":
+                user_query = m["content"]
+                break
+
+        # Retrieve context from Qdrant
+        logger.info(f"Retrieving context from Qdrant for query: {user_query!r}")
+        context_chunks = retrieve(user_query, k=3)
+        logger.info(f"Retrieved {len(context_chunks)} chunks from Qdrant.")
+
+        context = "\n".join(context_chunks)
+
+        # Inject context into system prompt
+        messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": f"""
+        Use the following context to help answer the user's question.
+
+        Context:
+        {context}
+        """
+            },
+        )
 
         self.tts_output_stopwatch = Stopwatch(autostart=False)
         tts = None
@@ -426,9 +458,11 @@ class UnmuteHandler(AsyncStreamHandler):
             logger.info("STT connection closed while receiving messages.")
 
     async def start_up_tts(self, generating_message_i: int) -> Quest[TextToSpeech]:
+        # To use HeadTTS, change return type to Quest[HeadTTSClient]
         async def _init() -> TextToSpeech:
+            # To use HeadTTS, change return type to HeadTTSClient
             factory = partial(
-                TextToSpeech,
+                TextToSpeech, # To use HeadTTS, change this to HeadTTSClient
                 get_time=self.audio_received_sec,
                 voice=self.tts_voice,
             )
@@ -454,15 +488,15 @@ class UnmuteHandler(AsyncStreamHandler):
                     return tts
             raise AssertionError("Too many unexpected packets.")
 
-        async def _run(tts: TextToSpeech):
+        async def _run(tts: TextToSpeech): # Change type to HeadTTSClient
             await self._tts_loop(tts, generating_message_i)
 
-        async def _close(tts: TextToSpeech):
+        async def _close(tts: TextToSpeech): # Change type to HeadTTSClient
             await tts.shutdown()
 
         return await self.quest_manager.add(Quest("tts", _init, _run, _close))
 
-    async def _tts_loop(self, tts: TextToSpeech, generating_message_i: int):
+    async def _tts_loop(self, tts: TextToSpeech, generating_message_i: int): # Change type to HeadTTSClient
         # On interruption, we swap the output queue. This will ensure that this worker
         # can never accidentally push to the new queue if it's interrupted.
         output_queue = self.output_queue

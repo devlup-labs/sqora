@@ -11,7 +11,7 @@ import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, File, Form
+from fastapi import APIRouter, HTTPException, File, Form, Request
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from unmute.llm.llm_service import llm_service
 from pydantic import BaseModel
@@ -193,7 +193,7 @@ class AdminConfigUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes – Auth
 # ---------------------------------------------------------------------------
-
+print("AVAILABLE METHODS:", dir(llm_service))
 @router.post("/api/auth/signup")
 async def api_signup(body: AuthSignup):
     if body.email in _users_db:
@@ -211,29 +211,48 @@ async def api_login(body: AuthLogin):
 
 # ---------------------------------------------------------------------------
 @router.post("/api/chat")
-async def api_chat(body: ChatRequest):
-    global ai_response_cache
-    
-    key = _normalize_prompt(body.message)
-    if key in ai_response_cache:
-        reply = ai_response_cache[key]
-        logger.info(f"AI cache hit: {body.message[:50]}")
-        lesson_id = _create_animation_job(reply, _extract_topic(body.message))
-        _append_to_chat_history("user", body.message, video_id=lesson_id)
-        _append_to_chat_history("assistant", reply)
-        return {"reply": reply, "video_id": lesson_id}
 
-    # Use the modular LLM service to get the response
-    reply = await llm_service.get_response(body.message, chat_history)
-    
-    # Save to cache
-    ai_response_cache[key] = reply
-    _save_json(AI_RESPONSE_CACHE_FILE, ai_response_cache)
-    
-    # Create animation job and record history
+async def api_chat(body: ChatRequest):
+    print("🔥 STEP 1: API HIT")
+
+    global ai_response_cache
+
+    key = _normalize_prompt(body.message)
+
+    try:
+        print("🔥 STEP 2: CALLING LLM")
+
+        # 🔥 Timeout wrapper (IMPORTANT)
+        reply = await asyncio.wait_for(
+            llm_service.get_response(body.message, chat_history),
+            timeout=25  # 10 sec max
+        )
+
+        print("🔥 STEP 3: LLM RESPONSE:", reply)
+
+    except asyncio.TimeoutError:
+        print("❌ TIMEOUT: Gemini too slow")
+        reply = "Sorry, AI is taking too long. Try again."
+
+    except Exception as e:
+        import traceback
+        print("❌ FULL ERROR:")
+        traceback.print_exc()
+        reply = f"AI error: {str(e)}"
+
+    # 🔥 Prevent bad caching
+    if reply and reply not in ["No response generated.", "AI error occurred."]:
+        ai_response_cache[key] = reply
+        _save_json(AI_RESPONSE_CACHE_FILE, ai_response_cache)
+
+    print("🔥 STEP 4: CREATING VIDEO JOB")
+
     lesson_id = _create_animation_job(reply, _extract_topic(body.message))
+
     _append_to_chat_history("user", body.message, video_id=lesson_id)
     _append_to_chat_history("assistant", reply)
+
+    print("🔥 STEP 5: RETURNING RESPONSE")
 
     return {"reply": reply, "video_id": lesson_id}
 
@@ -321,12 +340,67 @@ async def api_video_status(video_id: str):
     return {"ready": ready}
 
 
+@router.get("/api/videos/{video_id}/ready")
+async def api_video_ready_sse(video_id: str):
+    """SSE endpoint: holds open until the mp4 exists, then fires 'ready'."""
+    path = _RENDERED_DIR / f"{video_id}.mp4"
+
+    async def _watch():
+        for _ in range(240):          # max ~4 minutes
+            if path.exists():
+                yield "data: ready\n\n"
+                return
+            yield "data: waiting\n\n"
+            await asyncio.sleep(1)
+        yield "data: timeout\n\n"
+
+    return StreamingResponse(
+        _watch(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/api/videos/{video_id}")
-async def api_video(video_id: str):
+async def api_video(video_id: str, request: Request):
+    """Byte-range streaming endpoint so browsers can seek and start playing immediately."""
     path = _RENDERED_DIR / f"{video_id}.mp4"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Video not found or still rendering.")
-    return FileResponse(str(path), media_type="video/mp4")
+
+    file_size = path.stat().st_size
+    range_header = request.headers.get("range")
+
+    start, end = 0, file_size - 1
+    status_code = 200
+    if range_header:
+        match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+        if match:
+            start = int(match.group(1))
+            end = int(match.group(2)) if match.group(2) else file_size - 1
+            end = min(end, file_size - 1)
+            status_code = 206
+
+    chunk_size = 256 * 1024  # 256 KB
+
+    async def _iter():
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = end - start + 1
+            while remaining > 0:
+                data = f.read(min(chunk_size, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(end - start + 1),
+        "Content-Type": "video/mp4",
+    }
+    return StreamingResponse(_iter(), status_code=status_code, headers=headers)
 
 # ---------------------------------------------------------------------------
 # Routes – Contests
@@ -370,8 +444,6 @@ async def proxy_tts(text: str = Form(...), voice: str = Form("alba")):
     except Exception as e:
         logger.error(f"TTS Proxy request failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to connect to TTS server")
-
-
 
 @router.get("/api/admin/config")
 async def api_admin_config_get():
