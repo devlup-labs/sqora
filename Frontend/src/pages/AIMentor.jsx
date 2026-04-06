@@ -60,7 +60,7 @@ function AIMentor() {
   const sttRef = useRef(null)                           // SpeechRecognition instance
   const [liveTranscript, setLiveTranscript] = useState('')
 
-  // Poll for video readiness when activeVideoId changes
+  // Watch for video readiness via SSE (fires within ~1 s of render finishing)
   useEffect(() => {
     if (!activeVideoId) {
       setVideoReady(false)
@@ -71,24 +71,31 @@ function AIMentor() {
     setVideoReady(false)
     setVideoPolling(true)
 
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/videos/${activeVideoId}/status`)
-        const data = await res.json()
-        if (data.ready) {
+    // Optimistic check — if the video is already rendered (cache hit) show it instantly
+    fetch(`/api/videos/${activeVideoId}/status`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ready) {
           setVideoReady(true)
           setVideoPolling(false)
-          clearInterval(pollingRef.current)
         }
-      } catch (err) {
-        console.error('Video status poll error:', err)
+      })
+      .catch(() => { })
+
+    // SSE stream: server fires "ready" the instant the .mp4 file appears
+    const es = new EventSource(`/api/videos/${activeVideoId}/ready`)
+    pollingRef.current = es
+
+    es.onmessage = (e) => {
+      if (e.data === 'ready') {
+        setVideoReady(true)
+        setVideoPolling(false)
+        es.close()
       }
     }
+    es.onerror = () => es.close()
 
-    poll() // check immediately
-    pollingRef.current = setInterval(poll, 3000)
-
-    return () => clearInterval(pollingRef.current)
+    return () => es.close()
   }, [activeVideoId])
 
   // Auto-play video when ready
@@ -361,6 +368,7 @@ function AIMentor() {
           <div className="mentor-video-list">
             {chatMessages
               .filter((m) => m.video_id)
+              .slice(-10)
               .map((m, i) => (
                 <button
                   key={m.video_id}

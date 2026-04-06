@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useMemo } from 'react'
 import { useGLTF, useAnimations } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
@@ -6,8 +6,9 @@ import * as THREE from 'three'
 export function MentorModel({ isSpeaking, ...props }) {
   const group = useRef()
   // Path to your model
-  const { nodes, materials, animations } = useGLTF('/models/teacher_model.glb')
+  const { nodes, materials, animations } = useGLTF('/models/julia.glb')
   const { actions } = useAnimations(animations, group)
+  const actionEntries = useMemo(() => Object.entries(actions || {}), [actions])
 
   // --- ADJUST LIP SYNC HERE ---
   const LIP_SPEED = 4;        // Lower = Slower mouth movement
@@ -37,33 +38,34 @@ export function MentorModel({ isSpeaking, ...props }) {
     }
   });
 
-  // 2. BASIC ANIMATION (Idle/Talk)
+  // 2. SPEAK/IDLE BLENDING
   useEffect(() => {
-    const clips = Object.values(actions);
-    // Finds animations based on name keywords
-    const talkAction = clips.find(a => a.getClip().name.toLowerCase().includes('talk')) || clips[0];
-    const idleAction = clips.find(a => a.getClip().name.toLowerCase().includes('idle')) || clips[1];
+    actionEntries.forEach(([name, action]) => {
+      const lower = name.toLowerCase()
+      const isTalkLike = /talk|speak|speech|chat|gesture/.test(lower)
+      const isIdleLike = /idle|stand|breath|waiting/.test(lower)
 
-    if (isSpeaking) {
-      idleAction?.fadeOut(0.5);
-      talkAction?.reset().fadeIn(0.5).play();
-    } else {
-      talkAction?.fadeOut(0.5);
-      idleAction?.reset().fadeIn(0.5).play();
-    }
-  }, [isSpeaking, actions]);
+      if (isSpeaking) {
+        action.setEffectiveWeight(isTalkLike ? 1 : isIdleLike ? 0.2 : 0.6)
+      } else {
+        action.setEffectiveWeight(isIdleLike ? 1 : isTalkLike ? 0 : 0.4)
+      }
+    })
+  }, [isSpeaking, actionEntries])
 
-  // 3. START IDLE ANIMATION ON MOUNT
+  // 3. START ALL ANIMATIONS FROM julia.glb ON MOUNT
   useEffect(() => {
-    const clips = Object.values(actions);
-    // const idleAction = clips.find(a => a.getClip().name.toLowerCase().includes('idle')) || clips[1];
-    const idleAction = actions['Your_Exact_Animation_Name'];
-    
-    // Play idle animation immediately when component mounts
-    if (idleAction) {
-      idleAction.reset().play();
+    actionEntries.forEach(([, action]) => {
+      action.enabled = true
+      action.setLoop(THREE.LoopRepeat, Infinity)
+      action.clampWhenFinished = false
+      action.reset().play()
+    })
+
+    return () => {
+      actionEntries.forEach(([, action]) => action.stop())
     }
-  }, [actions]);
+  }, [actionEntries])
 
   return (
     <group ref={group} {...props} dispose={null}>
@@ -89,4 +91,4 @@ export function MentorModel({ isSpeaking, ...props }) {
   )
 }
 
-useGLTF.preload('/animated-female-teacher/source/Teacher Female Narration 01 (1).glb')
+useGLTF.preload('/models/julia.glb')
