@@ -9,8 +9,17 @@ import Exam from './pages/Exam'
 import Login from './pages/Login'
 import SignUp from './pages/SignUp'
 import Admin from './pages/Admin'
-import { AuthProvider } from './contexts/AuthContext'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { Navigate } from 'react-router-dom'
 import './App.css'
+
+function ProtectedRoute({ children }) {
+  const { currentUser } = useAuth()
+  if (!currentUser) {
+    return <Navigate to="/login" replace />
+  }
+  return children
+}
 
 function App() {
   return (
@@ -20,27 +29,18 @@ function App() {
         <Routes>
           {/* Landing page route - the main homepage */}
           <Route path="/" element={<Landing />} />
-          
-          {/* AI Mentor page route */}
-          <Route path="/ai-mentor" element={<AIMentor />} />
-          
-          {/* Contests page route */}
-          <Route path="/contests" element={<Contests />} />
-          
-          {/* Exam page – opened when user clicks "Enter >>" on a contest */}
-          <Route path="/exam/:code" element={<Exam />} />
-          
-          {/* Doubt Solver page route - currently reuses AI Mentor UI */}
-          <Route path="/doubt-solver" element={<AIMentor />} />
-          
-          {/* Login page route */}
+          {/* Public Routes */}
           <Route path="/login" element={<Login />} />
-          
-          {/* Sign Up page route */}
           <Route path="/signup" element={<SignUp />} />
 
-          {/* Admin panel route – protected in Admin component */}
-          <Route path="/admin" element={<Admin />} />
+          {/* Main App Routes - Protected */}
+          <Route path="/ai-mentor" element={<ProtectedRoute><AIMentor /></ProtectedRoute>} />
+          <Route path="/contests" element={<ProtectedRoute><Contests /></ProtectedRoute>} />
+          <Route path="/exam/:code" element={<ProtectedRoute><Exam /></ProtectedRoute>} />
+          <Route path="/doubt-solver" element={<ProtectedRoute><AIMentor /></ProtectedRoute>} />
+          
+          {/* Admin panel route */}
+          <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         </Routes>
       </Router>
     </AuthProvider>

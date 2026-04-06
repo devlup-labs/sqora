@@ -181,7 +181,7 @@ class AuthLogin(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    user_id: str = "guest"
+    user_id: str
     history: list = []
 
 class AdminConfigUpdate(BaseModel):
@@ -253,7 +253,7 @@ async def api_chat_history():
 
 
 @router.get("/api/chat/stream")
-async def api_chat_stream(message: str, user_id: str = "guest"):
+async def api_chat_stream(message: str, user_id: str):
     """
     SSE streaming endpoint. Yields:
       data: <token>          — one or more raw text tokens

@@ -75,7 +75,8 @@ function AIMentor() {
     setVideoReady(false)
     setVideoPolling(true)
 
-    const userId = currentUser ? currentUser.uid : "guest"
+    if (!currentUser) return
+    const userId = currentUser.uid
 
     // Optimistic check — if the video is already rendered (cache hit) show it instantly
     fetch(`/api/users/${userId}/videos/${activeVideoId}/status`)
@@ -210,7 +211,8 @@ function AIMentor() {
 
   // ----- AI Response: show dots while thinking, reveal all at once -----
   const handleAIResponse = async (questionText) => {
-    const userId = currentUser ? currentUser.uid : "guest"
+    if (!currentUser) return
+    const userId = currentUser.uid
     const currentHistory = [...chatMessages]
     
     setChatMessages((prev) => [
@@ -431,7 +433,7 @@ function AIMentor() {
                 className="mentor-video-player"
                 controls
                 autoPlay
-                src={`/api/users/${currentUser ? currentUser.uid : "guest"}/videos/${activeVideoId}`}
+                src={`/api/users/${currentUser.uid}/videos/${activeVideoId}`}
               />
             )}
           </div>
