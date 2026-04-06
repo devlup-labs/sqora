@@ -47,7 +47,27 @@ class LLMService:
                     self.url = llm_config.get("url", self.url)
             except Exception as e:
                 logger.warning(f"Config load failed: {e}")
-
+    def retrive_context(self, query: str) -> str:
+        import subprocess
+        logger.info(f"Retrieving context from Qdrant for query: {query!r}")
+        rag_proxy_path = os.path.join(os.path.dirname(__file__), "rag_proxy.py")
+        try:
+            process = subprocess.run(
+                ["python", rag_proxy_path, query],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if process.returncode == 0:
+                context = process.stdout.strip()
+                logger.info("Successfully retrieved context by executing rag_proxy.py")
+            else:
+                logger.error(f"Error executing rag_proxy.py: {process.stderr}")
+                context = ""
+        except Exception as e:
+            logger.error(f"Exception executing rag_proxy.py: {e}")
+            context = ""
+        return context
     def _build_prompt(self, message: str, chat_history: list) -> str:
         prompt = (
             "You are a friendly JEE/NEET tutor.\n"
@@ -59,6 +79,8 @@ class LLMService:
             prompt += f"{role}: {m['text']}\n"
 
         prompt += f"User: {message}\nAssistant:"
+        context = self.retrive_context(message)
+        prompt += f"\n\nContext: {context}"
         return prompt
 
     async def get_response(self, message: str, chat_history: list) -> str:
@@ -68,7 +90,7 @@ class LLMService:
             return "AI not configured"
 
         try:
-            prompt = self._build_prompt(message, chat_history)
+            prompt = await asyncio.to_thread(self._build_prompt, message, chat_history)
 
             # ✅ NEW SDK CALL
             response = await asyncio.to_thread(
@@ -91,13 +113,13 @@ class LLMService:
             traceback.print_exc()
             return f"Gemini error: {str(e)}"
 
-    def stream_response(self, message: str, chat_history: list):
+    async def stream_response(self, message: str, chat_history: list):
         if not self.client:
             yield "AI is not configured."
             return
 
         try:
-            prompt = self._build_prompt(message, chat_history)
+            prompt = await self._build_prompt(message, chat_history)
 
             # ✅ NEW SDK streaming
             response = self.client.models.generate_content(
