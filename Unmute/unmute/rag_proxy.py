@@ -119,3 +119,11 @@ async def proxy_chat(request: Request):
     async with httpx.AsyncClient() as client:
         resp = await client.post(f"{VLLM_TARGET}/v1/chat/completions", json=body)
     return resp.json()
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        query = sys.argv[1]
+        results = retrieve(query)
+        for r in results:
+            print(r)

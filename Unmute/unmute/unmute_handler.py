@@ -3,7 +3,6 @@ import math
 from functools import partial
 from logging import getLogger
 from typing import Any, Literal, cast
-from rag_proxy import retrieve
 
 import numpy as np
 import websockets
@@ -201,11 +200,26 @@ class UnmuteHandler(AsyncStreamHandler):
                 break
 
         # Retrieve context from Qdrant
+        import os
+        import asyncio
         logger.info(f"Retrieving context from Qdrant for query: {user_query!r}")
-        context_chunks = retrieve(user_query, k=3)
-        logger.info(f"Retrieved {len(context_chunks)} chunks from Qdrant.")
-
-        context = "\n".join(context_chunks)
+        rag_proxy_path = os.path.join(os.path.dirname(__file__), "rag_proxy.py")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "python", rag_proxy_path, user_query,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode == 0:
+                context = stdout.decode().strip()
+                logger.info("Successfully retrieved context by executing rag_proxy.py")
+            else:
+                logger.error(f"Error executing rag_proxy.py: {stderr.decode()}")
+                context = ""
+        except Exception as e:
+            logger.error(f"Exception executing rag_proxy.py: {e}")
+            context = ""
 
         # Inject context into system prompt
         messages.insert(

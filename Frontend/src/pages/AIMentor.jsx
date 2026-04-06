@@ -49,6 +49,7 @@ function AIMentor() {
     },
   ])
   const recognitionRef = useRef(null)
+  const chatMessagesRef = useRef(null)
 
   // --- Video panel state ---
   const [activeVideoId, setActiveVideoId] = useState(null)
@@ -58,6 +59,7 @@ function AIMentor() {
   const pollingRef = useRef(null)
   const activeAudioRef = useRef(null)
   const sttRef = useRef(null)                           // SpeechRecognition instance
+  const transcriptRef = useRef('')
   const [liveTranscript, setLiveTranscript] = useState('')
 
   // Watch for video readiness via SSE (fires within ~1 s of render finishing)
@@ -148,6 +150,7 @@ function AIMentor() {
     // which is far more efficient than parallel flooding.
 
     let nextFetchPromise = finalSentences.length > 0 ? fetchAudio(finalSentences[0]) : null
+    let playedCount = 0
 
     for (let i = 0; i < finalSentences.length; i++) {
       const url = await nextFetchPromise   // wait for current sentence audio
@@ -163,9 +166,37 @@ function AIMentor() {
       await new Promise((resolve) => {
         const audio = new Audio(url)
         activeAudioRef.current = audio
-        audio.onended = () => { URL.revokeObjectURL(url); resolve() }
-        audio.onerror = (e) => { console.error('[TTS] playback error:', e); URL.revokeObjectURL(url); resolve() }
-        audio.play().catch((err) => { console.error('[TTS] play() blocked:', err); resolve() })
+        let settled = false
+        const done = () => {
+          if (settled) return
+          settled = true
+          URL.revokeObjectURL(url)
+          resolve()
+        }
+        audio.onended = done
+        audio.onerror = (e) => { console.error('[TTS] playback error:', e); done() }
+        audio.play()
+          .then(() => {
+            playedCount += 1
+          })
+          .catch((err) => {
+            console.error('[TTS] play() blocked:', err)
+            done()
+          })
+      })
+    }
+
+    // Browser autoplay policies can block Audio() in async flows.
+    // Fallback to built-in speech synthesis so mentor still speaks and animates.
+    if (playedCount === 0 && typeof window !== 'undefined' && window.speechSynthesis) {
+      await new Promise((resolve) => {
+        const utterance = new SpeechSynthesisUtterance(stripForTTS(text))
+        utterance.rate = 1
+        utterance.pitch = 1
+        utterance.onend = () => resolve()
+        utterance.onerror = () => resolve()
+        window.speechSynthesis.cancel()
+        window.speechSynthesis.speak(utterance)
       })
     }
 
@@ -209,12 +240,14 @@ function AIMentor() {
         updated[updated.length - 1] = { role: 'assistant', text: fallback }
         return updated
       })
+      speakTextPipelined(fallback)
     }
   }
 
   // ----- STT: browser Web Speech API (Chrome → Google cloud, best quality) -----
   const stopRecordingAndSend = () => {
     setIsListening(false)
+    transcriptRef.current = liveTranscript.trim()
     setLiveTranscript('')
     if (sttRef.current) {
       sttRef.current.stop()
@@ -248,14 +281,17 @@ function AIMentor() {
           interim += event.results[i][0].transcript
         }
       }
-      setLiveTranscript(finalText || interim)
+      const latestTranscript = (finalText || interim).trim()
+      transcriptRef.current = latestTranscript
+      setLiveTranscript(latestTranscript)
     }
 
     recognition.onend = () => {
       setIsListening(false)
       setLiveTranscript('')
       sttRef.current = null
-      const text = finalText.trim()
+      const text = (finalText || transcriptRef.current || '').trim()
+      transcriptRef.current = ''
       if (text) {
         setLastQuestion(text)
         handleAIResponse(text)
@@ -266,11 +302,13 @@ function AIMentor() {
       console.error('[STT] Error:', event.error)
       setIsListening(false)
       setLiveTranscript('')
+      transcriptRef.current = ''
       sttRef.current = null
     }
 
     recognition.start()
     setIsListening(true)
+    transcriptRef.current = ''
     setLiveTranscript('')
   }
 
@@ -302,6 +340,9 @@ function AIMentor() {
         activeAudioRef.current.pause()
         activeAudioRef.current = null
       }
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+      }
       setIsSpeaking(false)
       return
     }
@@ -329,6 +370,12 @@ function AIMentor() {
       setActiveVideoId(lastWithVideo.video_id)
     }
   }, [chatMessages])
+
+  useEffect(() => {
+    if (chatMessagesRef.current) {
+      chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight
+    }
+  }, [chatMessages, isChatOpen])
 
   return (
     <div className="app">
@@ -369,6 +416,7 @@ function AIMentor() {
             {chatMessages
               .filter((m) => m.video_id)
               .slice(-10)
+                .reverse()
               .map((m, i) => (
                 <button
                   key={m.video_id}
@@ -449,7 +497,7 @@ function AIMentor() {
                 ×
               </button>
             </div>
-            <div className="mentor-chat-messages">
+            <div className="mentor-chat-messages" ref={chatMessagesRef}>
               {chatMessages.map((msg, index) => (
                 <div
                   key={index}
