@@ -8,8 +8,6 @@ import 'katex/dist/katex.min.css'
 import Header from '../components/Header'
 import { MentorModel } from './MentorModel'
 import { useAppConfig } from '../store/useAppConfig'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
-import { db } from '../lib/firebase'
 import { useAuth } from '../contexts/AuthContext'
 import './aimentor.css'
 
@@ -235,23 +233,24 @@ function AIMentor() {
       const reply = data.reply || 'Sorry, something went wrong.'
       const videoId = data.video_id
 
-      let finalHistory = []
       setChatMessages((prev) => {
         const updated = [...prev]
         updated[updated.length - 1] = { role: 'assistant', text: reply, video_id: videoId }
-        updated[updated.length - 2] = { ...updated[updated.length - 2], video_id: videoId }
         finalHistory = updated
         return updated
       })
       if (videoId) setActiveVideoId(videoId)
 
-      // Save to Firestore if authenticated
+      // Save to Server Local API
       if (currentUser) {
         try {
-          const docRef = doc(db, 'users', currentUser.uid, 'chats', 'aimentor')
-          await setDoc(docRef, { history: finalHistory }, { merge: true })
+          fetch(`/api/users/${userId}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ history: finalHistory }),
+          })
         } catch (e) {
-          console.error("Failed to save history to Firestore:", e)
+          console.error("Failed to save history to local server:", e)
         }
       }
 
@@ -342,10 +341,11 @@ function AIMentor() {
     const fetchHistory = async () => {
       if (!currentUser) return
       try {
-        const docRef = doc(db, 'users', currentUser.uid, 'chats', 'aimentor')
-        const snap = await getDoc(docRef)
-        if (snap.exists() && snap.data().history) {
-          const history = snap.data().history
+        const res = await fetch(`/api/users/${currentUser.uid}/chat`)
+        const data = await res.json()
+        
+        if (data.history && data.history.length > 0) {
+          const history = data.history
           setChatMessages(history)
           const lastWithVideo = [...history].reverse().find((m) => m.video_id)
           if (lastWithVideo) {
@@ -353,7 +353,7 @@ function AIMentor() {
           }
         }
       } catch (err) {
-        console.error('Failed to fetch chat history from Firestore:', err)
+        console.error('Failed to fetch chat history from server:', err)
       }
     }
     fetchHistory()

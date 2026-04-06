@@ -31,7 +31,7 @@ function App() {
           <Route path="/" element={<Landing />} />
           {/* Public Routes */}
           <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<SignUp />} />
+          <Route path="/signup" element={<Login />} />
 
           {/* Main App Routes - Protected */}
           <Route path="/ai-mentor" element={<ProtectedRoute><AIMentor /></ProtectedRoute>} />

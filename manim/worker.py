@@ -517,7 +517,8 @@ def process_job(job_path):
                 print(f"WARNING: Could not find rendered video for {lesson_id}")
                 print(f"Manim stdout: {result.stdout[-500:]}")
 
-        shutil.move(job_path, os.path.join(DONE, job_file))
+        if os.path.exists(job_path):
+            shutil.move(job_path, os.path.join(DONE, job_file))
         total_time = time.time() - job_start
         print(f"⏱  Job done in {total_time:.1f}s (codegen: {codegen_time:.1f}s, render: {render_time:.1f}s)")
 

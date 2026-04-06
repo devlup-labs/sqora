@@ -61,6 +61,12 @@ def get_ai_cache(user_id: str) -> dict:
 def save_ai_cache(user_id: str, cache: dict):
     _save_json(str(get_user_dir(user_id) / "ai_cache.json"), cache)
 
+def get_chat_cache(user_id: str) -> list:
+    return _load_json(str(get_user_dir(user_id) / "chat_history.json"), [])
+
+def save_chat_cache(user_id: str, cache: list):
+    _save_json(str(get_user_dir(user_id) / "chat_history.json"), cache)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -247,9 +253,15 @@ async def api_chat(body: ChatRequest):
     return {"reply": reply, "video_id": lesson_id}
 
 
-@router.get("/api/chat")
-async def api_chat_history():
-    return {"history": []}
+@router.get("/api/users/{user_id}/chat")
+async def api_chat_history(user_id: str):
+    return {"history": get_chat_cache(user_id)}
+
+@router.post("/api/users/{user_id}/chat")
+async def api_chat_history_sync(user_id: str, request: Request):
+    data = await request.json()
+    save_chat_cache(user_id, data.get("history", []))
+    return {"success": True}
 
 
 @router.get("/api/chat/stream")
