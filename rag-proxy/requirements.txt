@@ -1,0 +1,8 @@
+# RAG Proxy - Retrieval-Augmented Generation FastAPI Service
+# Standalone service for injecting RAG context into LLM requests
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.29.0
+httpx>=0.24.0
+sentence-transformers>=2.2.0
+qdrant-client>=1.7.0
