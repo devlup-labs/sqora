@@ -104,6 +104,27 @@ class LLMService:
                     )
             except Exception as e:
                 logger.warning(f"Config load failed: {e}")
+    def retrieve_context(self, query: str) -> str:
+        import subprocess
+        logger.info(f"Retrieving context from Qdrant for query: {query!r}")
+        rag_proxy_path = os.path.join(os.path.dirname(__file__), "rag_proxy.py")
+        try:
+            process = subprocess.run(
+                ["python", rag_proxy_path, query],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if process.returncode == 0:
+                context = process.stdout.strip()
+                logger.info("Successfully retrieved context by executing rag_proxy.py")
+            else:
+                logger.error(f"Error executing rag_proxy.py: {process.stderr}")
+                context = ""
+        except Exception as e:
+            logger.error(f"Exception executing rag_proxy.py: {e}")
+            context = ""
+        return context
 
     @staticmethod
     def _to_int(value, default: int, minimum: int = 0) -> int:
@@ -332,7 +353,12 @@ class LLMService:
             for m in chat_history[-10:]:
                 role = self._role_for_llm(str(m.get("role", "user")))
                 messages.append({"role": role, "parts": [{"text": str(m.get("text", ""))}]})
-            messages.append({"role": "user", "parts": [{"text": message}]})
+            context_data = self.retrieve_context(message)
+            final_text = message
+            if context_data:
+                final_text += f"\n\nContext:\n{context_data}"
+                
+            messages.append({"role": "user", "parts": [{"text": final_text}]})
             return messages
 
         self._sync_state_with_history(chat_history)
@@ -358,7 +384,12 @@ class LLMService:
         for _, role, text in self._pending_entries(chat_history):
             messages.append({"role": role, "parts": [{"text": text}]})
 
-        messages.append({"role": "user", "parts": [{"text": message}]})
+        context_data = self.retrieve_context(message)
+        final_text = message
+        if context_data:
+            final_text += f"\n\nContext:\n{context_data}"
+            
+        messages.append({"role": "user", "parts": [{"text": final_text}]})
         return messages
 
     async def get_response(self, message: str, chat_history: list) -> str:

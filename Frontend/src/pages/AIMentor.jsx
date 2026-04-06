@@ -123,7 +123,7 @@ function AIMentor() {
     const finalSentences = sentences.length > 0 ? sentences : [text]
     console.log(`[TTS] ${finalSentences.length} sentence(s)`)
 
-    const VOICE = 'cosette'   // clearly female pocket-tts voice
+    const VOICE = 'v2_af_bella'   // Quality female pocket-tts voice (V2)
 
     const fetchAudio = async (sentence) => {
       const stripped = stripForTTS(sentence.trim())
@@ -458,7 +458,7 @@ function AIMentor() {
         </div>
 
         {/* ========== CENTER: 3D MODEL & HUD ========== */}
-        <div className="mentor-center-area">
+        <div className={`mentor-center-area ${isChatOpen ? 'is-chat-open' : ''}`}>
           <div className="mentor-canvas-wrapper">
             <Canvas camera={{ position: [0, 1.2, 4.5], fov: 35 }}>
               <ambientLight intensity={0.7} />

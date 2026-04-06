@@ -5,149 +5,125 @@ import * as THREE from 'three'
 
 export function MentorModel({ isSpeaking, ...props }) {
   const group = useRef()
-  const speechStrength = useRef(0)
   // Path to your model
   const { nodes, materials, animations } = useGLTF('/models/julia.glb')
   const { actions } = useAnimations(animations, group)
   const actionEntries = useMemo(() => Object.entries(actions || {}), [actions])
-  const faceMesh = useMemo(
-    () => Object.values(nodes).find((n) => n?.morphTargetDictionary),
-    [nodes]
-  )
-  const handBones = useMemo(() => {
-    const bones = {
-      leftForeArm: null,
-      rightForeArm: null,
-      leftHand: null,
-      rightHand: null,
-    }
 
-    Object.values(nodes).forEach((node) => {
-      if (!node?.isBone || !node.name) return
-      const name = node.name.toLowerCase()
-      if (!bones.leftForeArm && /left.*forearm|forearm.*left/.test(name)) bones.leftForeArm = node
-      if (!bones.rightForeArm && /right.*forearm|forearm.*right/.test(name)) bones.rightForeArm = node
-      if (!bones.leftHand && /left.*hand|hand.*left/.test(name)) bones.leftHand = node
-      if (!bones.rightHand && /right.*hand|hand.*right/.test(name)) bones.rightHand = node
-    })
-
-    return bones
-  }, [nodes])
-
-  // --- ADJUST LIP SYNC HERE ---
-  const LIP_INTENSITY = 0.55 // How wide the mouth opens
+  // --- ADJUST LIP SYNC / MOVEMENT HERE ---
+  const LIP_SPEED = 7;
+  const LIP_INTENSITY = 0.65;
   // ----------------------------
 
-  // 1. LIP SYNC LOGIC
+  // 1. LIP SYNC LOGIC (Enhanced for all face meshes)
   useFrame((state) => {
-    speechStrength.current = THREE.MathUtils.lerp(
-      speechStrength.current,
-      isSpeaking ? 1 : 0,
-      isSpeaking ? 0.12 : 0.08
-    )
+    const t = state.clock.elapsedTime;
 
-    if (faceMesh) {
-      const dict = faceMesh.morphTargetDictionary
-      // Looks for common mouth morph names
-      const mouthIndex = dict.mouthOpen ?? dict.jawOpen ?? dict.viseme_aa ?? 0
+    Object.values(nodes).forEach((node) => {
+      if (node.morphTargetDictionary && node.morphTargetInfluences) {
+        const dict = node.morphTargetDictionary;
+        const mouthIndex =
+          dict['mouthOpen'] !== undefined ? dict['mouthOpen'] :
+            dict['jawOpen'] ?? dict['viseme_aa'];
 
-      if (mouthIndex >= 0 && faceMesh.morphTargetInfluences) {
-        // Mixed speech wave feels less robotic than one pure sine.
-        const t = state.clock.elapsedTime
-        const speechWave =
-          (0.45 + Math.abs(Math.sin(t * 4.2)) * 0.45 + Math.abs(Math.sin(t * 7.3)) * 0.2)
-        const targetMouth = LIP_INTENSITY * speechWave * speechStrength.current
-        faceMesh.morphTargetInfluences[mouthIndex] = THREE.MathUtils.lerp(
-          faceMesh.morphTargetInfluences[mouthIndex] || 0,
-          targetMouth,
-          0.22
-        )
+        if (mouthIndex !== undefined) {
+          if (isSpeaking) {
+            const wave = (Math.abs(Math.sin(t * LIP_SPEED)) * LIP_INTENSITY) + (Math.sin(t * 7) * 0.1);
+            node.morphTargetInfluences[mouthIndex] = THREE.MathUtils.lerp(
+              node.morphTargetInfluences[mouthIndex],
+              Math.max(0, Math.min(1, wave)),
+              0.3
+            );
+          } else {
+            node.morphTargetInfluences[mouthIndex] = THREE.MathUtils.lerp(
+              node.morphTargetInfluences[mouthIndex], 0, 0.15
+            );
+          }
+        }
       }
-    }
+    });
+  });
 
-    // Add subtle conversational arm/hand gestures while speaking.
+  // 2. PROCEDURAL MOVEMENT (REST POS & SPEAKING/EXPLAINING)
+  useFrame((state) => {
     const t = state.clock.elapsedTime
-    const gesture = speechStrength.current
-    const leftForearmRestZ = -0.95
-    const rightForearmRestZ = 0.95
-    const forearmRestX = -0.15
-    const leftHandRestY = 0.08
-    const rightHandRestY = 0.08
 
-    if (handBones.leftForeArm) {
-      handBones.leftForeArm.rotation.z = THREE.MathUtils.lerp(
-        handBones.leftForeArm.rotation.z,
-        leftForearmRestZ + Math.sin(t * 2.2) * 0.12 * gesture,
-        0.12
-      )
-      handBones.leftForeArm.rotation.x = THREE.MathUtils.lerp(
-        handBones.leftForeArm.rotation.x,
-        forearmRestX + Math.sin(t * 1.5 + 0.8) * 0.08 * gesture,
-        0.12
-      )
+    const bones = {
+      leftArm: nodes.LeftArm,
+      rightArm: nodes.RightArm,
+      leftForeArm: nodes.LeftForeArm,
+      rightForeArm: nodes.RightForeArm,
+      head: nodes.Head,
+      neck: nodes.Neck,
+      spine: nodes.Spine,
     }
-    if (handBones.rightForeArm) {
-      handBones.rightForeArm.rotation.z = THREE.MathUtils.lerp(
-        handBones.rightForeArm.rotation.z,
-        rightForearmRestZ + Math.sin(t * 2.5 + 1.1) * 0.14 * gesture,
-        0.12
-      )
-      handBones.rightForeArm.rotation.x = THREE.MathUtils.lerp(
-        handBones.rightForeArm.rotation.x,
-        forearmRestX + Math.sin(t * 1.7 + 1.4) * 0.08 * gesture,
-        0.12
-      )
-    }
-    if (handBones.leftHand) {
-      handBones.leftHand.rotation.y = THREE.MathUtils.lerp(
-        handBones.leftHand.rotation.y,
-        leftHandRestY + Math.sin(t * 3.0) * 0.08 * gesture,
-        0.12
-      )
-    }
-    if (handBones.rightHand) {
-      handBones.rightHand.rotation.y = THREE.MathUtils.lerp(
-        handBones.rightHand.rotation.y,
-        rightHandRestY + Math.sin(t * 3.4 + 0.6) * 0.1 * gesture,
-        0.12
-      )
-    }
-  })
 
-  // 2. SPEAK/IDLE BLENDING
-  useEffect(() => {
-    actionEntries.forEach(([name, action]) => {
-      const lower = name.toLowerCase()
-      const isTalkLike = /talk|speak|speech|chat|gesture/.test(lower)
-      const isIdleLike = /idle|stand|breath|waiting/.test(lower)
+    // 1. CONFIRMED REST POS (Confirmed by User)
+    const restZ = 0.7;
+    const restX = 1.2;
+    const restY = 0.15;
 
-      if (isSpeaking) {
-        action.setEffectiveWeight(isTalkLike ? 1 : isIdleLike ? 0.35 : 0.15)
-      } else {
-        action.setEffectiveWeight(isIdleLike ? 1 : 0)
+    // Default target rotations
+    let l_Arm_Z = restZ, r_Arm_Z = -restZ;
+    let l_Arm_X = restX, r_Arm_X = restX;
+    let l_Arm_Y = restY, r_Arm_Y = -restY;
+
+    let l_Fore_X = 0, r_Fore_X = 0;
+    let head_Y = 0, head_X = 0, head_Z = 0;
+    let neck_y = 0;
+
+    // 2. TEACHER DYNAMICS (if isSpeaking is true)
+    if (isSpeaking) {
+      // --- HEAD ONLY: SLIGHTLY UP & NODDING ---
+      head_X = -0.15 + (Math.sin(t * 2.5) * 0.05);
+      head_Y = Math.sin(t * 1.5) * 0.12;
+      head_Z = Math.cos(t * 1.1) * 0.05;
+      neck_y = Math.sin(t * 1.0) * 0.04;
+
+      // Note: All arm/forearm gestures have been removed per your request.
+      // The arms will remain in the confirmed rest position while she speaks.
+
+    } else {
+      // Return to Idle/Breathing
+      if (bones.spine) {
+        bones.spine.rotation.x = Math.sin(t * 0.5) * 0.01;
       }
-    })
-  }, [isSpeaking, actionEntries])
-
-  // 3. START ALL ANIMATIONS FROM julia.glb ON MOUNT
-  useEffect(() => {
-    actionEntries.forEach(([, action]) => {
-      action.enabled = true
-      action.setLoop(THREE.LoopRepeat, Infinity)
-      action.clampWhenFinished = false
-      action.reset().play()
-    })
-
-    return () => {
-      actionEntries.forEach(([, action]) => action.stop())
     }
-  }, [actionEntries])
+
+    // --- APPLY ROTATIONS SMOOTHLY (LERP) ---
+    const LERP_FACTOR = 0.05;
+
+    if (bones.leftArm) {
+      bones.leftArm.rotation.x = THREE.MathUtils.lerp(bones.leftArm.rotation.x, l_Arm_X, LERP_FACTOR);
+      bones.leftArm.rotation.y = THREE.MathUtils.lerp(bones.leftArm.rotation.y, l_Arm_Y, LERP_FACTOR);
+      bones.leftArm.rotation.z = THREE.MathUtils.lerp(bones.leftArm.rotation.z, l_Arm_Z, LERP_FACTOR);
+    }
+    if (bones.rightArm) {
+      bones.rightArm.rotation.x = THREE.MathUtils.lerp(bones.rightArm.rotation.x, r_Arm_X, LERP_FACTOR);
+      bones.rightArm.rotation.y = THREE.MathUtils.lerp(bones.rightArm.rotation.y, r_Arm_Y, LERP_FACTOR);
+      bones.rightArm.rotation.z = THREE.MathUtils.lerp(bones.rightArm.rotation.z, r_Arm_Z, LERP_FACTOR);
+    }
+    if (bones.leftForeArm) {
+      bones.leftForeArm.rotation.x = THREE.MathUtils.lerp(bones.leftForeArm.rotation.x, l_Fore_X, LERP_FACTOR);
+    }
+    if (bones.rightForeArm) {
+      bones.rightForeArm.rotation.x = THREE.MathUtils.lerp(bones.rightForeArm.rotation.x, r_Fore_X, LERP_FACTOR);
+    }
+    if (bones.head) {
+      bones.head.rotation.x = THREE.MathUtils.lerp(bones.head.rotation.x, head_X, LERP_FACTOR);
+      bones.head.rotation.y = THREE.MathUtils.lerp(bones.head.rotation.y, head_Y, LERP_FACTOR);
+      bones.head.rotation.z = THREE.MathUtils.lerp(bones.head.rotation.z, head_Z, LERP_FACTOR);
+    }
+    if (bones.neck) {
+      bones.neck.rotation.y = THREE.MathUtils.lerp(bones.neck.rotation.y, neck_y, LERP_FACTOR);
+    }
+  });
 
   return (
     <group ref={group} {...props} dispose={null}>
       {/* Renders the skeleton and meshes exactly as they are in the GLB file */}
       {nodes.Hips && <primitive object={nodes.Hips} />}
-      
+
       {Object.entries(nodes).map(([name, node]) => {
         if (node.isSkinnedMesh) {
           return (
@@ -158,6 +134,8 @@ export function MentorModel({ isSpeaking, ...props }) {
               skeleton={node.skeleton}
               morphTargetDictionary={node.morphTargetDictionary}
               morphTargetInfluences={node.morphTargetInfluences}
+              castShadow
+              receiveShadow
             />
           )
         }

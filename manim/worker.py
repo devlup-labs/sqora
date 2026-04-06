@@ -19,7 +19,10 @@ os.makedirs(USER_DATA_ROOT, exist_ok=True)
 MANIM_OUTPUT_DIR = os.path.join(BASE, "media", "videos")
 
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyAzK9NGRsInb_o4TPu5gitqjsiA-Eu8R3U")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY is not set")
+    
 GEMINI_MODEL = "gemini-2.0-flash-lite"
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
