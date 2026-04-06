@@ -1,91 +1,119 @@
 import os
 import json
 import logging
-from pathlib import Path
-from openai import OpenAI
 import asyncio
+from pathlib import Path
+
+from dotenv import load_dotenv
+from google import genai
+
+# Load .env
+_ENV_FILE = Path(__file__).parents[4] / ".env"
+load_dotenv(dotenv_path=_ENV_FILE)
 
 logger = logging.getLogger(__name__)
+
 
 class LLMService:
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.provider = "gemini"
-        self.url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-        self.api_key = os.environ.get("GEMINI_API_KEY", "")
+        self.url = None
+        self.api_key = os.getenv("GEMINI_API_KEY")
+
+        print("INIT API KEY:", self.api_key)
+
         self.client = None
         self.load_config()
-        self.init_client()
+
+        if not self.api_key:
+            print("❌ API KEY MISSING")
+
+        try:
+            # ✅ NEW SDK CLIENT
+            self.client = genai.Client(api_key=self.api_key)
+            print("✅ Gemini initialized (new SDK)")
+        except Exception as e:
+            print("❌ Gemini init error:", e)
+            self.client = None
 
     def load_config(self):
         if os.path.exists(self.config_path):
-            with open(self.config_path, "r") as f:
-                config = json.load(f)
-                llm_config = config.get("llm", {})
-                self.provider = llm_config.get("provider", self.provider)
-                self.url = llm_config.get("url", self.url)
+            try:
+                with open(self.config_path, "r") as f:
+                    config = json.load(f)
+                    llm_config = config.get("llm", {})
+                    self.provider = llm_config.get("provider", self.provider)
+                    self.url = llm_config.get("url", self.url)
+            except Exception as e:
+                logger.warning(f"Config load failed: {e}")
 
-    def init_client(self):
-        if self.api_key:
-            self.client = OpenAI(
-                api_key=self.api_key,
-                base_url=self.url,
-            )
-        else:
-            logger.warning("GEMINI_API_KEY not set. LLM will not function.")
+    def _build_prompt(self, message: str, chat_history: list) -> str:
+        prompt = (
+            "You are a friendly JEE/NEET tutor.\n"
+            "Explain clearly with simple examples.\n\n"
+        )
 
-    def _build_messages(self, message: str, chat_history: list) -> list:
-        messages = [
-            {"role": "system", "content": (
-                "You are a friendly and knowledgeable JEE/NEET tutor. "
-                "Give clear, concise explanations with examples. "
-                "Use simple language suitable for Indian high-school students preparing for competitive exams."
-            )}
-        ]
         for m in chat_history[-10:]:
-            role = "assistant" if m["role"] == "assistant" else "user"
-            messages.append({"role": role, "content": m["text"]})
-        messages.append({"role": "user", "content": message})
-        return messages
+            role = "User" if m["role"] == "user" else "Assistant"
+            prompt += f"{role}: {m['text']}\n"
+
+        prompt += f"User: {message}\nAssistant:"
+        return prompt
 
     async def get_response(self, message: str, chat_history: list) -> str:
-        """Non-streaming: returns the full reply as a string."""
+        print("🔥 USING GEMINI (NEW SDK)")
+
         if not self.client:
-            return "AI is not configured. Please check your API key."
+            return "AI not configured"
+
         try:
-            messages = self._build_messages(message, chat_history)
+            prompt = self._build_prompt(message, chat_history)
+
+            # ✅ NEW SDK CALL
             response = await asyncio.to_thread(
-                self.client.chat.completions.create,
-                model="gemini-2.5-flash",
-                messages=messages,
-                temperature=0,
+                self.client.models.generate_content,
+                model="gemini-2.5-flash-lite",
+                contents=prompt
             )
-            return response.choices[0].message.content
+
+            print("RAW RESPONSE:", response)
+
+            # ✅ Safe extraction
+            if hasattr(response, "text") and response.text:
+                return response.text
+
+            return "No response generated."
+
         except Exception as e:
-            logger.error(f"LLM Error: {e}")
-            return "Sorry, I am having trouble thinking right now. Please try again."
+            import traceback
+            print("🔥 GEMINI ERROR:")
+            traceback.print_exc()
+            return f"Gemini error: {str(e)}"
 
     def stream_response(self, message: str, chat_history: list):
-        """Streaming: yields text delta strings as they arrive from the model."""
         if not self.client:
-            yield "AI is not configured. Please check your API key."
+            yield "AI is not configured."
             return
+
         try:
-            messages = self._build_messages(message, chat_history)
-            stream = self.client.chat.completions.create(
-                model="gemini-2.5-flash",
-                messages=messages,
-                temperature=0,
-                stream=True,
+            prompt = self._build_prompt(message, chat_history)
+
+            # ✅ NEW SDK streaming
+            response = self.client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=prompt,
+                stream=True
             )
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield delta
+
+            for chunk in response:
+                if hasattr(chunk, "text") and chunk.text:
+                    yield chunk.text
+
         except Exception as e:
             logger.error(f"LLM Stream Error: {e}")
-            yield "Sorry, I ran into a problem. Please try again."
+            yield "Error streaming response"
 
-# Singleton instance
+
 _BASE_DIR = Path(__file__).parents[2]
 llm_service = LLMService(str(_BASE_DIR / "config.json"))

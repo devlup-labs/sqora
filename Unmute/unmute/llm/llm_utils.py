@@ -1,159 +1,123 @@
-import re
-from copy import deepcopy
-from functools import cache
-from typing import Any, AsyncIterator, cast
+import os
+import json
+import asyncio
+import logging
+from pathlib import Path
+from typing import AsyncIterator, List, Dict
 
-from openai import AsyncOpenAI, OpenAI
+import google.generativeai as genai
 
-from unmute.kyutai_constants import LLM_SERVER, LLM_PATH
-
-from ..kyutai_constants import KYUTAI_LLM_API_KEY, KYUTAI_LLM_MODEL
-
-INTERRUPTION_CHAR = "—"  # em-dash
-USER_SILENCE_MARKER = "..."
+logger = logging.getLogger(__name__)
 
 
-def preprocess_messages_for_llm(
-    chat_history: list[dict[str, str]],
-) -> list[dict[str, str]]:
-    output = []
+class LLMService:
+    def __init__(self, config_path: str):
+        self.config_path = config_path
+        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.model_name = "gemini-2.5-flash"
+        self.client = None
 
-    for message in chat_history:
-        message = deepcopy(message)
+        self.load_config()
 
-        # Sometimes, an interruption happens before the LLM can say anything at all.
-        # In that case, we're left with a message with only INTERRUPTION_CHAR.
-        # Simplify by removing.
-        if message["content"].replace(INTERRUPTION_CHAR, "") == "":
-            continue
+        if not self.api_key:
+            raise ValueError("❌ GEMINI_API_KEY not set")
 
-        # If the llm was interrupted we don't want to insert the INTERRUPTION_CHAR
-        # into the context, otherwise the LLM might want to repeat it.
-        message["content"] = message["content"].strip().removesuffix(INTERRUPTION_CHAR)
+        try:
+            genai.configure(api_key=self.api_key)
+            self.client = genai.GenerativeModel(self.model_name)
+            logger.info("✅ Gemini initialized")
+        except Exception as e:
+            raise RuntimeError(f"❌ Gemini init failed: {e}")
 
-        if output and message["role"] == output[-1]["role"]:
-            output[-1]["content"] += " " + message["content"]
-        else:
-            output.append(message)
+    def load_config(self):
+        if os.path.exists(self.config_path):
+            with open(self.config_path, "r") as f:
+                config = json.load(f)
+                llm_config = config.get("llm", {})
+                self.model_name = llm_config.get("model", self.model_name)
 
-    def role_at(index: int) -> str | None:
-        if index >= len(output):
-            return None
-        return output[index]["role"]
-
-    if role_at(0) == "system" and role_at(1) in [None, "assistant"]:
-        # Some LLMs, like Gemma, get confused if the assistant message goes before user
-        # messages, so add a dummy user message.
-        output = [output[0]] + [{"role": "user", "content": "Hello."}] + output[1:]
-
-    for message in chat_history:
-        if (
-            message["role"] == "user"
-            and message["content"].startswith(USER_SILENCE_MARKER)
-            and message["content"] != USER_SILENCE_MARKER
-        ):
-            # This happens when the user is silent but then starts talking again after
-            # the silence marker was inserted but before the LLM could respond.
-            # There are special instructions in the system prompt about how to handle
-            # the silence marker, so remove the marker from the message to not confuse
-            # the LLM
-            message["content"] = message["content"][len(USER_SILENCE_MARKER) :]
-
-    return output
-
-
-async def rechunk_to_words(iterator: AsyncIterator[str]) -> AsyncIterator[str]:
-    """Rechunk the stream of text to whole words.
-
-    Otherwise the TTS doesn't know where word boundaries are and will mispronounce
-    split words.
-
-    The spaces will be included with the next word, so "foo bar baz" will be split into
-    "foo", " bar", " baz".
-    Multiple space-like characters will be merged to a single space.
-    """
-    buffer = ""
-    space_re = re.compile(r"\s+")
-    prefix = ""
-    async for delta in iterator:
-        buffer = buffer + delta
-        while True:
-            match = space_re.search(buffer)
-            if match is None:
-                break
-            chunk = buffer[: match.start()]
-            buffer = buffer[match.end() :]
-            if chunk != "":
-                yield prefix + chunk
-            prefix = " "
-
-    if buffer != "":
-        yield prefix + buffer
-
-
-class LLMStream:
-    """Protocol — kept for type hints in case you add a new LLM backend."""
-    async def chat_completion(self, messages: list[dict[str, str]]):
-        raise NotImplementedError
-
-
-def get_openai_client(
-    server_url: str = LLM_SERVER, api_key: str | None = KYUTAI_LLM_API_KEY
-) -> AsyncOpenAI:
-    # AsyncOpenAI() will complain if the API key is not set, so set a dummy string if it's None.
-    # This still makes sense when using vLLM because it doesn't care about the API key.
-    return AsyncOpenAI(api_key=api_key or "EMPTY", base_url=server_url + LLM_PATH)
-
-
-@cache
-def autoselect_model() -> str:
-    if KYUTAI_LLM_MODEL is not None:
-        return KYUTAI_LLM_MODEL
-    openai_client = get_openai_client()
-    # OpenAI() will complain if the API key is not set, so set a dummy string if it's None.
-    # This still makes sense when using vLLM because it doesn't care about the API key.
-    client_sync = OpenAI(
-        api_key=openai_client.api_key or "EMPTY", base_url=openai_client.base_url
-    )
-    models = client_sync.models.list()
-    if len(models.data) != 1:
-        raise ValueError("There are multiple models available. Please specify one.")
-    return models.data[0].id
-
-
-class VLLMStream:
-    def __init__(
-        self,
-        client: AsyncOpenAI,
-        temperature: float = 0,
-    ):
-        """
-        If `model` is None, it will look at the available models, and if there is only
-        one model, it will use that one. Otherwise, it will raise.
-        """
-        self.client = client
-        self.model = autoselect_model()
-        self.temperature = temperature
-
-    async def chat_completion(
-        self, messages: list[dict[str, str]]
-    ) -> AsyncIterator[str]:
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=cast(Any, messages),  # Cast and hope for the best
-            stream=True,
-            temperature=self.temperature,
+    # --------------------------
+    # Message formatting
+    # --------------------------
+    def _build_prompt(self, message: str, chat_history: List[Dict]) -> str:
+        system_prompt = (
+            "You are a friendly and knowledgeable JEE/NEET tutor. "
+            "Give clear, concise explanations with examples. "
+            "Use simple language for Indian students."
         )
 
-        async with stream:
-            async for chunk in stream:
-                chunk_content = chunk.choices[0].delta.content
+        history_text = []
+        for m in chat_history[-10:]:
+            role = "Assistant" if m["role"] == "assistant" else "User"
+            history_text.append(f"{role}: {m['text']}")
 
-                if not chunk_content:
-                    # This happens on the first message, see:
-                    # https://platform.openai.com/docs/guides/streaming-responses#read-the-responses
-                    # Also ignore `null` chunks, which is what llama.cpp does:
-                    # https://github.com/ggml-org/llama.cpp/blob/6491d6e4f1caf0ad2221865b4249ae6938a6308c/tools/server/tests/unit/test_chat_completion.py#L338
-                    continue
+        history_text.append(f"User: {message}")
 
-                yield chunk_content
+        return system_prompt + "\n\n" + "\n".join(history_text)
+
+    # --------------------------
+    # Non-streaming response
+    # --------------------------
+    async def get_response(self, message: str, chat_history: List[Dict]) -> str:
+        if not self.client:
+            return "AI not configured."
+
+        prompt = self._build_prompt(message, chat_history)
+
+        try:
+            response = await asyncio.to_thread(
+                self.client.generate_content,
+                prompt
+            )
+
+            return response.text or "No response generated."
+
+        except Exception as e:
+            logger.error(f"LLM Error: {e}")
+            return "Something went wrong."
+
+    # --------------------------
+    # Streaming response (SYNC generator)
+    # --------------------------
+    def stream_response(self, message: str, chat_history: List[Dict]):
+        if not self.client:
+            yield "AI not configured."
+            return
+
+        prompt = self._build_prompt(message, chat_history)
+
+        try:
+            response = self.client.generate_content(
+                prompt,
+                stream=True
+            )
+
+            for chunk in response:
+                if hasattr(chunk, "text") and chunk.text:
+                    yield chunk.text
+
+        except Exception as e:
+            logger.error(f"Stream Error: {e}")
+            yield "Error occurred."
+
+    # --------------------------
+    # Async streaming wrapper (IMPORTANT)
+    # --------------------------
+    async def async_stream_response(
+        self, message: str, chat_history: List[Dict]
+    ) -> AsyncIterator[str]:
+        loop = asyncio.get_event_loop()
+
+        def generator():
+            for chunk in self.stream_response(message, chat_history):
+                yield chunk
+
+        for chunk in await loop.run_in_executor(None, lambda: list(generator())):
+            yield chunk
+
+
+# --------------------------
+# Singleton instance
+# --------------------------
+_BASE_DIR = Path(__file__).parents[2]
+llm_service = LLMService(str(_BASE_DIR / "config.json"))
