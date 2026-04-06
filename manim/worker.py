@@ -5,6 +5,8 @@ import time
 import shutil
 import subprocess
 import requests
+from dotenv import load_dotenv
+load_dotenv()
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -18,8 +20,8 @@ SCENES_DIR = os.path.join(BASE, "generated_scenes")
 for d in [INCOMING, DONE, FAILED, RENDERED, SCENES_DIR]:
     os.makedirs(d, exist_ok=True)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyAzK9NGRsInb_o4TPu5gitqjsiA-Eu8R3U")
+GEMINI_MODEL = "gemini-2.0-flash-lite"
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 )
@@ -32,15 +34,21 @@ You are a Manim Community Edition (v0.19) code generator for educational animati
 
 Convert the following educational content into a **single, self-contained Manim scene**.
 
+The output frame is 14.22 × 8 Manim units (config.frame_width × config.frame_height).
+Keep ALL content within a safe zone of 1 unit from every edge.
+
 STRICT RULES — follow every one:
 
 1. Start with `from manim import *`
 2. Define exactly ONE class called `GeneratedScene(Scene):`
 3. Set background: `self.camera.background_color = "#0a1224"` in `construct()`
 4. Use `Text(...)` for explanations (**never** use `Tex` for plain text).
-   - **CRITICAL**: ALWAYS set `width=config.frame_width - 2` on every Text() to prevent text from going off-screen.
-   - Keep each individual `Text()` call to max ~80 chars. If the content is longer, split it across MULTIPLE Text objects shown in SEPARATE frames/animation steps.
-   - Use `font_size=28` for body text, `font_size=40` for titles.
+   - **CRITICAL**: NEVER use `width=` kwarg in Text() — it does not exist.
+     Instead call `.scale_to_fit_width(config.frame_width - 2)` AFTER creating the Text object:
+       `t = Text("Hello", font_size=28); t.scale_to_fit_width(config.frame_width - 2)`
+   - Keep each `Text()` to max ~60 characters. For longer content, split into MULTIPLE
+     `Text()` objects grouped with `VGroup(...).arrange(DOWN, buff=0.3)`.
+   - Use `font_size=24` for body text, `font_size=36` for titles.
 5. Use `MathTex(...)` for LaTeX equations/formulas.
    - **CRITICAL LaTeX rules for MathTex:**
      - NEVER use `\text{{}}` — it causes compilation errors. Use plain `Text()` objects beside the equation instead.
@@ -48,23 +56,27 @@ STRICT RULES — follow every one:
      - For units like "kg", "m/s", "MeV", put them in a separate `Text()` positioned next to the equation.
      - Use ONLY basic LaTeX: `^`, `_`, `\frac{{}}{{}}`, `\sqrt{{}}`, `\times`, `\cdot`, `\Delta`, `\sum`, `\int`, `\vec{{}}`, `\hat{{}}`.
      - NEVER use `\textbf`, `\textit`, `\mathrm`, `\mbox`, `\hbox` inside MathTex.
-     - For long equations, use `font_size=36` and break across lines using `\\\\` inside an `aligned` environment.
+     - For long equations, use `font_size=32` and break across lines using `\\\\` inside an `aligned` environment.
      - Always test: if the LaTeX string has English words in it, those words should be in a separate `Text()`, NOT in `MathTex()`.
 6. Use animations: `Write`, `FadeIn`, `FadeOut`, `Create`, `Transform`, `ReplacementTransform`
 7. Add `self.wait(1)` to `self.wait(2)` between sections so the viewer can read.
-8. Keep the total animation under 60 seconds (about 10-20 animation steps). Use more steps to present content clearly.
+8. Keep the total animation under 60 seconds (about 15-20 animation steps). Be concise — fewer steps renders faster.
 9. Use colors: `BLUE_C`, `YELLOW_C`, `GREEN_C`, `RED_C`, `WHITE`, `GREY_A` for variety.
 10. Position elements carefully — use `.to_edge()`, `.shift()`, `.next_to()` to avoid overlaps.
-    - Keep a margin of at least 0.5 units from all screen edges.
-    - Use `VGroup(...).arrange(DOWN, buff=0.5)` to stack text blocks vertically.
+    - Keep a margin of at least 1 unit from all screen edges.
+    - Use `VGroup(...).arrange(DOWN, buff=0.3)` to stack text blocks vertically.
+    - Center content vertically: `group.move_to(ORIGIN)` or `group.next_to(title, DOWN, buff=0.6)`
 11. Clear the screen with `self.play(FadeOut(*self.mobjects))` between major sections.
 12. DO NOT use any external files, images, SVGs, or custom fonts.
 13. DO NOT use `Tex()` — only `Text()` and `MathTex()`.
 14. Output ONLY valid Python code. No markdown fences, no comments outside the code, no explanations.
-15. Structure each section as: Title → Key point (1-2 short lines) → Equation (if any) → Clear screen → Next section.
+15. Structure each section as: Title → Key points (2-3 short lines in a VGroup) → Equation (if any) → Clear screen → Next section.
 16. NEVER put a long paragraph in a single `Text()`. Break content into bite-sized pieces across multiple frames.
 17. **CRITICAL**: Do NOT add ANY explanatory text, comments, or [instruction] tags after the code ends. Output ONLY the Python code itself.
-
+18. CRITICAL STRING RULES:
+    - NEVER include line breaks inside Text("...")
+    - NEVER include unescaped apostrophes like: A's → use: As or A\'s
+    - Each Text() must be a SINGLE LINE string
 ## Topic: {topic}
 
 ## Content to animate:
@@ -118,7 +130,40 @@ def _sanitize_generated_code(code):
     code = re.sub(r'\\mathrm\s*\{[^}]*\}', '', code)
     code = re.sub(r'\\mbox\s*\{[^}]*\}', '', code)
     code = re.sub(r'\\hbox\s*\{[^}]*\}', '', code)
+    # Force scale_to_fit_width after every Text()
+    # Fix unterminated/multiline strings inside Text(...)
+    def fix_text_strings(match):
+        content = match.group(1)
 
+        # Replace newlines inside string with space
+        content = content.replace("\n", " ")
+
+        # Escape single quotes properly
+        content = content.replace("'", "\\'")
+
+        return f'Text("{content}")'
+
+    code = re.sub(
+        r'Text\("([^"]*?)"\)',
+        fix_text_strings,
+        code,
+        flags=re.DOTALL
+    )
+    return code
+def _fix_common_manim_bugs(code: str) -> str:
+    # Fix wrong config attribute
+    code = code.replace("frame_frame_width", "frame_width")
+
+    # Remove invalid width=... inside Text()
+    code = re.sub(
+        r'Text\(([^)]*?),\s*width\s*=\s*[^)]+\)',
+        r'Text(\1)',
+        code
+    )
+
+    # Fix fallback-style width usage
+    code = code.replace(".width =", ".scale_to_fit_width(")
+    
     return code
 
 
@@ -143,6 +188,18 @@ def _strip_mathtex_from_code(code):
     code = code.replace('\\sqrt', '√')
     return code
 
+def _inject_layout_guard(code: str) -> str:
+    guard = """
+
+def enforce_safe_layout(mobj):
+    if hasattr(mobj, "width") and mobj.width > config.frame_width - 2:
+        mobj.scale_to_fit_width(config.frame_width - 2)
+    if hasattr(mobj, "height") and mobj.height > config.frame_height - 2:
+        mobj.scale_to_fit_height(config.frame_height - 2)
+    mobj.move_to(ORIGIN)
+    return mobj
+"""
+    return code + guard
 
 def generate_manim_code(topic, response_text):
     """Call Gemini to generate manim code from the AI response.
@@ -153,15 +210,15 @@ def generate_manim_code(topic, response_text):
 
     # Clean the raw Gemini response: strip markdown, keep only plain text
     cleaned = _clean_response_text(response_text)
-
+    cleaned = "\n".join(_wrap_text(cleaned, 55))
     prompt = MANIM_CODE_PROMPT.format(
         topic=topic,
-        response_text=cleaned[:3000],  # Limit to avoid token overflow
+        response_text=cleaned[:3000],  # Keep short for faster code-gen
     )
 
     # Retry logic for handling temporary API failures
-    max_retries = 3
-    retry_delay = 2  # seconds
+    max_retries = 2
+    retry_delay = 1  # seconds
     
     for attempt in range(max_retries):
         try:
@@ -179,7 +236,7 @@ def generate_manim_code(topic, response_text):
                     ],
                     "temperature": 0,
                 },
-                timeout=600,
+                timeout=30,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -195,7 +252,8 @@ def generate_manim_code(topic, response_text):
 
             # Sanitize problematic LaTeX commands
             code = _sanitize_generated_code(code)
-
+            code = _fix_common_manim_bugs(code)
+            code = _inject_layout_guard(code)
             return code
 
         except requests.exceptions.HTTPError as e:
@@ -240,29 +298,39 @@ def _strip_markdown_fences(code):
     return "\n".join(lines).strip()
 
 
+def _wrap_text(text, max_chars=55):
+    """Break text into lines of at most max_chars at word boundaries."""
+    lines = []
+    words = text.split()
+    current = ""
+    for w in words:
+        if current and len(current) + len(w) + 1 > max_chars:
+            lines.append(current.strip())
+            current = w
+        else:
+            current = (current + " " + w) if current else w
+    if current:
+        lines.append(current.strip())
+    return lines
+
+
 def _fallback_scene(topic, response_text):
-    """Simple fallback scene when Gemini is unavailable."""
+    """Fallback scene with clean multi-line text layout."""
     # Clean markdown from response before using in Text() objects
     clean_text = _clean_response_text(response_text)
     clean_text = clean_text.replace('"', "'").replace("\n", " ").strip()
-    # Break into ~120 char chunks at word boundaries
-    chunks = []
-    words = clean_text.split()
-    current = ""
-    for w in words:
-        if len(current) + len(w) + 1 > 120:
-            chunks.append(current.strip())
-            current = w
-        else:
-            current = current + " " + w if current else w
-    if current:
-        chunks.append(current.strip())
-    chunks = chunks[:6]  # Max 6 frames
+
+    # Split into slides — each slide has 2-3 short lines
+    all_lines = _wrap_text(clean_text, max_chars=55)
+    slides = []
+    for i in range(0, len(all_lines), 3):
+        slides.append(all_lines[i:i + 3])
+    slides = slides[:6]  # Max 6 slides
 
     # Sanitize topic for use in generated Python strings
     safe_topic = topic.replace('\\', '\\\\').replace('"', "'")
 
-    # Build scene code with multi-frame display
+    # Build scene code
     scene_lines = [
         'from manim import *',
         '',
@@ -270,30 +338,69 @@ def _fallback_scene(topic, response_text):
         '    def construct(self):',
         '        self.camera.background_color = "#0a1224"',
         '',
-        f'        title = Text("{safe_topic}", font_size=40, weight=BOLD, color=BLUE_C)',
-        '        title.width = min(title.width, config.frame_width - 2)',
-        '        title.to_edge(UP).shift(DOWN * 0.3)',
-        '        underline = Line(title.get_left(), title.get_right(), stroke_width=2, color=BLUE_C)',
-        '        underline.next_to(title, DOWN, buff=0.15)',
+        '        # --- Title ---',
+        f'        title = Text("{safe_topic}", font_size=36, weight=BOLD, color=BLUE_C)',
+        '        if title.width > config.frame_width - 2:',
+        '            title.scale_to_fit_width(config.frame_width - 2)',
+        '        title.to_edge(UP, buff=0.6)',
+        '        underline = Line(',
+        '            LEFT * (config.frame_width / 2 - 1),',
+        '            RIGHT * (config.frame_width / 2 - 1),',
+        '            stroke_width=1, color=BLUE_C',
+        '        )',
+        '        underline.next_to(title, DOWN, buff=0.2)',
         '        self.play(Write(title), Create(underline))',
         '        self.wait(1)',
     ]
 
-    for i, chunk in enumerate(chunks):
-        # Escape quotes and curly braces so they don't break f-strings or Python syntax
-        safe_chunk = chunk.replace('\\', '\\\\').replace('"', "'").replace('{', '{{').replace('}', '}}')
-        var = f'body_{i}'
+    body_colors = ['WHITE', 'GREY_A', 'WHITE', 'GREY_A', 'WHITE', 'GREY_A']
+
+    for slide_idx, slide_lines in enumerate(slides):
+        color = body_colors[slide_idx % len(body_colors)]
+        step_label = f'step_{slide_idx}'
+        group_name = f'slide_{slide_idx}'
+
+        # Build Text objects for each line in this slide
+        text_vars = []
+        scene_lines.append('')
+        scene_lines.append(f'        # --- Slide {slide_idx + 1} ---')
+
+        # Step number indicator
+        scene_lines.append(
+            f'        {step_label} = Text("({slide_idx + 1}/{len(slides)})", '
+            f'font_size=18, color=GREY_A)'
+        )
+        scene_lines.append(
+            f'        {step_label}.to_corner(DR, buff=0.4)'
+        )
+
+        for line_idx, line_text in enumerate(slide_lines):
+            safe_line = line_text.replace('\\', '\\\\').replace('"', "'").replace('{', '{{').replace('}', '}}')
+            var = f'line_{slide_idx}_{line_idx}'
+            text_vars.append(var)
+            scene_lines.append(
+                f'        {var} = Text("{safe_line}", font_size=24, color={color})'
+            )
+            scene_lines.append(
+                f'        if {var}.width > config.frame_width - 2:'
+            )
+            scene_lines.append(
+                f'            {var}.scale_to_fit_width(config.frame_width - 2)'
+            )
+
+        # Group the lines and center below title
+        vars_joined = ', '.join(text_vars)
         scene_lines += [
-            '',
-            f'        {var} = Text("{safe_chunk}", font_size=28, color=GREY_A, width=config.frame_width - 2)',
-            f'        {var}.next_to(underline, DOWN, buff=0.8)',
-            f'        self.play(FadeIn({var}, shift=UP))',
-            f'        self.wait(2)',
-            f'        self.play(FadeOut({var}))',
+            f'        {group_name} = VGroup({vars_joined}).arrange(DOWN, buff=0.35)',
+            f'        {group_name}.next_to(underline, DOWN, buff=0.8)',
+            f'        self.play(FadeIn({group_name}, shift=UP * 0.3), FadeIn({step_label}))',
+            f'        self.wait(2.5)',
+            f'        self.play(FadeOut({group_name}), FadeOut({step_label}))',
         ]
 
     scene_lines += [
         '',
+        '        # --- End ---',
         '        self.play(FadeOut(*self.mobjects))',
         '        self.wait(0.5)',
     ]
@@ -304,12 +411,13 @@ def _fallback_scene(topic, response_text):
 def process_job(job_file):
     job_path = os.path.join(INCOMING, job_file)
     lesson_id = job_file.replace(".json", "")
+    job_start = time.time()
 
     try:
         # Check if video already exists (cache hit from backend)
         existing_video = os.path.join(RENDERED, f"{lesson_id}.mp4")
         if os.path.exists(existing_video):
-            print(f"✓ Video already exists for {job_file}, skipping generation")
+            print(f"✓ Video already exists for {job_file}, skipping generation (cache hit)")
             shutil.move(job_path, os.path.join(DONE, job_file))
             return
         
@@ -325,7 +433,15 @@ def process_job(job_file):
 
         # Generate manim code via Gemini
         print(f"Generating manim code for: {topic}")
+        codegen_start = time.time()
         manim_code = generate_manim_code(topic, response_text)
+        # Inject safety call inside construct()
+        manim_code = manim_code.replace(
+            "def construct(self):",
+            "def construct(self):\n        self.camera.background_color = '#0a1224'"
+        )
+        codegen_time = time.time() - codegen_start
+        print(f"⏱  Code generation: {codegen_time:.1f}s")
 
         # Write the generated scene to a file
         scene_file = os.path.join(SCENES_DIR, f"{lesson_id}.py")
@@ -334,29 +450,32 @@ def process_job(job_file):
 
         print(f"Running manim on generated scene...")
 
-        # Run manim on the generated file  (1080p @ 30fps)
+        # Run manim on the generated file (480p @ 10fps, single pass)
+        render_start = time.time()
         result = subprocess.run(
-            [
-                "python3",
-                "-m",
-                "manim",
-                "-qh",
-                "--fps", "30",
-                scene_file,
-                "GeneratedScene",
-            ],
-            check=True,
-            cwd=BASE,
-            env={**os.environ, "PYTHONPATH": BASE},
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+                [
+                    "python3",
+                    "-m",
+                    "manim",
+                    "-ql",
+                    "--fps", "10",
+                    scene_file,
+                    "GeneratedScene",
+                ],
+                check=True,
+                cwd=BASE,
+                env={**os.environ, "PYTHONPATH": BASE},
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        render_time = time.time() - render_start
+        print(f"⏱  Manim render: {render_time:.1f}s")
 
         # Find the output video — manim outputs to media/videos/<filename>/1080p30/
         scene_name = lesson_id
         video_dir = os.path.join(
-            MANIM_OUTPUT_DIR, scene_name, "1080p30"
+            MANIM_OUTPUT_DIR, scene_name, "480p10"
         )
         video_file = os.path.join(video_dir, "GeneratedScene.mp4")
 
@@ -385,6 +504,8 @@ def process_job(job_file):
                 print(f"Manim stdout: {result.stdout[-500:]}")
 
         shutil.move(job_path, os.path.join(DONE, job_file))
+        total_time = time.time() - job_start
+        print(f"⏱  Job done in {total_time:.1f}s (codegen: {codegen_time:.1f}s, render: {render_time:.1f}s)")
 
     except subprocess.CalledProcessError as e:
         print(f"Manim render failed for {job_file}:")
@@ -401,8 +522,8 @@ def process_job(job_file):
                     f.write(stripped_code)
                 result2 = subprocess.run(
                     [
-                        "python3", "-m", "manim", "-qh",
-                        "--fps", "30",
+                        "python3", "-m", "manim", "-ql",
+                        "--fps", "10",
                         scene_file_stripped, "GeneratedScene",
                     ],
                     check=True,
@@ -410,7 +531,7 @@ def process_job(job_file):
                     env={**os.environ, "PYTHONPATH": BASE},
                     capture_output=True,
                     text=True,
-                    timeout=300,
+                    timeout=120,
                 )
                 # Find and copy the video
                 for root, dirs, files in os.walk(MANIM_OUTPUT_DIR):
@@ -450,8 +571,8 @@ def _render_fallback(job_file, job_path, lesson_id, job_data):
 
     subprocess.run(
         [
-            "python3", "-m", "manim", "-qh",
-            "--fps", "30",
+            "python3", "-m", "manim", "-ql",
+            "--fps", "10",
             scene_file, "GeneratedScene",
         ],
         check=True,
@@ -459,6 +580,7 @@ def _render_fallback(job_file, job_path, lesson_id, job_data):
         env={**os.environ, "PYTHONPATH": BASE},
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
     # Find and copy video
