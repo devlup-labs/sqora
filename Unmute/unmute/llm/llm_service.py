@@ -271,7 +271,7 @@ class LLMService:
                  return self._fallback_compaction(source)
                  
             # Use the new SDK for compaction too
-            response: Any = self.client.models.generate_content(
+            response: Any = self.client.models.generate_content(  # type: ignore[union-attr]
                 model=self.compaction_model or self.model,
                 contents=[
                     {
@@ -360,7 +360,7 @@ class LLMService:
                 {"role": "user", "parts": [{"text": system_content}]},
                 {"role": "model", "parts": [{"text": "Understood. I will act as your tutor."}]}
             ]
-            recent = chat_history[-10:] if len(chat_history) >= 10 else chat_history
+            recent = chat_history[-10:] if len(chat_history) >= 10 else chat_history  # type: ignore[index]
             for m in recent:
                 role = self._role_for_llm(str(m.get("role", "user")))
                 messages.append({"role": role, "parts": [{"text": str(m.get("text", ""))}]})
@@ -408,11 +408,11 @@ class LLMService:
             return "AI is not configured. Please check your API key."
         try:
             # Fix: calling _build_messages which is a method, not a static function
-            messages = await asyncio.to_thread(self._build_messages, message, chat_history)
+            messages = await asyncio.to_thread(self._build_messages, message, chat_history)  # type: ignore[arg-type]
             
             # Using the new SDK
             response: Any = await asyncio.to_thread(
-                self.client.models.generate_content,
+                self.client.models.generate_content,  # type: ignore[union-attr]
                 model=self.model,
                 contents=messages,
                 # config is a dict in the new SDK generate_content

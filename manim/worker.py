@@ -452,7 +452,7 @@ def process_job(job_path):
         codegen_start = time.time()
         manim_code = generate_manim_code(topic, response_text)
         # Inject safety call inside construct()
-        manim_code = manim_code.replace(
+        manim_code = manim_code.replace(  # type: ignore[union-attr]
             "def construct(self):",
             "def construct(self):\n        self.camera.background_color = '#0a1224'"
         )
@@ -643,7 +643,7 @@ def main():
                         finally:
                             active_jobs.discard(path)
                     
-                    executor.submit(run_job, str(job_path))
+                    executor.submit(run_job, str(job_path))  # type: ignore[arg-type]
             time.sleep(2)
 
 if __name__ == "__main__":

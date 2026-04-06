@@ -1,0 +1,16 @@
+{
+  "site_package_search_strategy": "pep561",
+  "search_path": [
+    ".",
+    "Unmute",
+    "manim"
+  ],
+  "exclude": [
+    ".venv",
+    "node_modules",
+    "Frontend"
+  ],
+  "python_version": "3.14",
+  "venv": ".venv",
+  "venv_root": "."
+}

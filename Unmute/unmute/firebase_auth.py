@@ -39,7 +39,7 @@ def _init_firebase():
             firebase_admin.initialize_app(cred)
 
         _firebase_admin = firebase_admin
-        _firebase_auth_module = auth
+        _firebase_auth_module = auth  # type: ignore[assignment]
         logger.info("✅ Firebase Admin SDK initialized — token verification is ACTIVE")
         return True
     except ImportError:
@@ -62,7 +62,8 @@ def verify_token(token: str) -> str | None:
         return _unverified_decode(token)
 
     try:
-        decoded = _firebase_auth_module.verify_id_token(token)
+        assert _firebase_auth_module is not None
+        decoded = _firebase_auth_module.verify_id_token(token)  # type: ignore[union-attr]
         return decoded.get("uid")
     except Exception as e:
         logger.warning(f"Token verification failed: {e}")
