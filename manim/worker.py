@@ -6,6 +6,7 @@ import time
 import shutil
 import subprocess
 import requests
+import concurrent.futures
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -622,16 +623,26 @@ def main():
     print(f"  API key set: {'yes' if GEMINI_API_KEY else 'NO'}")
     print(f"  Watching: {USER_DATA_ROOT}/*/incoming_jobs/")
 
-    while True:
-        # Find all JSON jobs in any user's incoming_jobs folder
-        job_pattern = os.path.join(USER_DATA_ROOT, "*", "incoming_jobs", "*.json")
-        for job_path in glob.glob(job_pattern):
-            try:
-                process_job(job_path)
-            except Exception as e:
-                print(f"Error processing job {job_path}: {e}")
-        time.sleep(2)
+    # Keep track of active jobs so we don't submit the same job twice
+    active_jobs = set()
 
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        while True:
+            job_pattern = os.path.join(USER_DATA_ROOT, "*", "incoming_jobs", "*.json")
+            for job_path in glob.glob(job_pattern):
+                if job_path not in active_jobs:
+                    active_jobs.add(job_path)
+                    
+                    def run_job(path):
+                        try:
+                            process_job(path)
+                        except Exception as e:
+                            print(f"Error processing job {path}: {e}")
+                        finally:
+                            active_jobs.discard(path)
+                    
+                    executor.submit(run_job, job_path)
+            time.sleep(2)
 
 if __name__ == "__main__":
     main()
