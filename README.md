@@ -33,6 +33,53 @@ Frontend (5173)  <-->  Backend (8000)  <-->  Manim Worker
                            +--> TTS Server (8089)
 ```
 
+<<<<<<< HEAD
+=======
+### 2. Setup Python Environment (Backend & Manim)
+From the project root (`/home/yash/SQ`):
+```bash
+# Create the virtual environment
+python3 -m venv .venv
+
+# Activate it
+source .venv/bin/activate
+
+# Install all unified dependencies
+pip install -r requirements.txt
+```
+
+## Running the Application Locally
+
+You will need to open **three separate terminals** to run all services simultaneously.
+
+### Terminal 1: Frontend Server
+```bash
+cd /home/sqora
+npm run dev
+```
+*(Available at `http://localhost:5173`)*
+
+### Terminal 2: Backend (WebSocket AI Engine)
+
+```bash
+cd /home/raid/sqora
+source .venv/bin/activate
+
+# Run FastAPI using module path (recommended)
+PYTHONPATH=sqora/Unmute fastapi dev sqora/Unmute/unmute/main_websocket.py
+```
+
+*(Runs the FastAPI app reloading on `127.0.0.1:8000`)*
+
+### Terminal 3: Manim Worker
+```bash
+cd /sqora/sqora/manim
+source ../.venv/bin/activate
+python worker.py
+```
+*(Starts the renderer worker polling for new scenes to generate)*
+
+>>>>>>> 04028c2 (docs: update README, testing guide, and dependencies)
 ## Directory Overview
 
 ```text
