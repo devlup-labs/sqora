@@ -232,13 +232,13 @@ function AIMentor() {
       const reply = data.reply || 'Sorry, something went wrong.'
       const videoId = data.video_id
 
-      let finalHistory = []
-      setChatMessages((prev) => {
-        const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', text: reply, video_id: videoId }
-        finalHistory = updated
-        return updated
-      })
+      const finalHistory = [
+        ...currentHistory,
+        { role: 'user', text: questionText },
+        { role: 'assistant', text: reply, video_id: videoId }
+      ]
+      
+      setChatMessages(finalHistory)
       if (videoId) setActiveVideoId(videoId)
 
       // Save to Server Local API
