@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "buildCommand": "cd Frontend && npm install && npm run build",
+  "outputDirectory": "Frontend/dist",
+  "installCommand": "cd Frontend && npm install",
+  "framework": null,
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" }
+  ],
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.12",
+      "maxDuration": 60
+    }
+  }
+}

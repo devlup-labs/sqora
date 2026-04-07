@@ -9,7 +9,7 @@ import Header from '../components/Header'
 import { MentorModel } from './MentorModel'
 import { useAppConfig } from '../store/useAppConfig'
 import { useAuth } from '../contexts/AuthContext'
-import { apiFetch } from '../lib/apiFetch'
+import { apiFetch, buildAuthUrl } from '../lib/apiFetch'
 import './aimentor.css'
 
 // Strip markdown, LaTeX, and symbols for clean text-to-speech
@@ -63,12 +63,19 @@ function AIMentor() {
   const transcriptRef = useRef('')
   const [liveTranscript, setLiveTranscript] = useState('')
   const [videoToken, setVideoToken] = useState('')
+  const [videoSrc, setVideoSrc] = useState('')
 
   // Keep a fresh token for video/SSE URLs (refreshed whenever user changes)
   useEffect(() => {
     if (!currentUser) return
     currentUser.getIdToken(false).then(setVideoToken).catch(() => {})
   }, [currentUser])
+
+  // Rebuild the authenticated video src whenever the active video or token changes
+  useEffect(() => {
+    if (!activeVideoId || !currentUser) { setVideoSrc(''); return }
+    buildAuthUrl(`/api/users/${currentUser.uid}/videos/${activeVideoId}`).then(setVideoSrc)
+  }, [activeVideoId, currentUser, videoToken])
 
   // Watch for video readiness via SSE (fires within ~1 s of render finishing)
   useEffect(() => {
@@ -96,12 +103,12 @@ function AIMentor() {
       .catch(() => { })
 
     // SSE stream: server fires "ready" the instant the .mp4 file appears
-    // EventSource can't send headers, so pass token as query param
+    // EventSource can't send headers, so pass token as query param via buildAuthUrl
     let es
     const startSSE = async () => {
       try {
-        const token = currentUser ? await currentUser.getIdToken(false) : ''
-        es = new EventSource(`/api/users/${userId}/videos/${activeVideoId}/ready?token=${encodeURIComponent(token)}`)
+        const sseUrl = await buildAuthUrl(`/api/users/${userId}/videos/${activeVideoId}/ready`)
+        es = new EventSource(sseUrl)
         pollingRef.current = es
         es.onmessage = (e) => {
           if (e.data === 'ready') {
@@ -446,7 +453,7 @@ function AIMentor() {
                 className="mentor-video-player"
                 controls
                 autoPlay
-                src={`/api/users/${currentUser.uid}/videos/${activeVideoId}${videoToken ? `?token=${encodeURIComponent(videoToken)}` : ''}`}
+                src={videoSrc}
               />
             )}
           </div>
