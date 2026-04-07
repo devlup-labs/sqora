@@ -25,7 +25,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY is not set")
     
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 )
@@ -234,7 +234,7 @@ def generate_manim_code(topic, response_text):
                 },
                 json={
                     "model": GEMINI_MODEL,
-                    "reasoning_effort": "low",
+                    "thinking_budget": 0,
                     "messages": [
                         {"role": "user", "content": prompt},
                     ],

@@ -64,6 +64,7 @@ function AIMentor() {
   const [liveTranscript, setLiveTranscript] = useState('')
   const [videoToken, setVideoToken] = useState('')
   const [videoSrc, setVideoSrc] = useState('')
+  const [audioAnalyser, setAudioAnalyser] = useState(null)
 
   // Keep a fresh token for video/SSE URLs (refreshed whenever user changes)
   useEffect(() => {
@@ -138,6 +139,24 @@ function AIMentor() {
     if (!voiceEnabled || !text.trim()) return
     setIsSpeaking(true)
 
+    // --- Prep AudioContext for vSync ---
+    let analyser = audioAnalyser
+    if (!analyser) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext
+      const ctx = new AudioCtx()
+      const node = ctx.createAnalyser()
+      node.fftSize = 1024 
+      node.connect(ctx.destination) 
+      setAudioAnalyser(node)
+      analyser = node
+    }
+
+    if (analyser.context.state === 'suspended') {
+      await analyser.context.resume()
+    }
+    // ------------------------------------
+
+
     // Smart sentence split
     const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [text]
     const sentences = rawSentences.filter((s) => s.trim().length > 1)
@@ -189,8 +208,11 @@ function AIMentor() {
 
       console.log(`[TTS] ▶ sentence ${i + 1}/${finalSentences.length}`)
       await new Promise((resolve) => {
-        const audio = new Audio(url)
+        const audio = new Audio()
+        audio.crossOrigin = "anonymous" // Prevent CORS issues with Web Audio
+        audio.src = url
         activeAudioRef.current = audio
+
         let settled = false
         const done = () => {
           if (settled) return
@@ -200,7 +222,29 @@ function AIMentor() {
         }
         audio.onended = done
         audio.onerror = (e) => { console.error('[TTS] playback error:', e); done() }
+        
+        // --- Connect to Analyser for vSync ---
+        if (analyser) {
+          try {
+            const ctx = analyser.context
+            const source = ctx.createMediaElementSource(audio)
+            
+            // Connect to analyser for vSync data
+            source.connect(analyser)
+            
+            // ALSO connect directly to destination to ensure we hear the audio
+            // (Connecting to MediaElementSource mutes the original <audio> element)
+            source.connect(ctx.destination)
+          } catch (e) {
+            console.warn('[vSync] Connection failed, audio might be muted:', e)
+          }
+        }
+
+
+        // ------------------------------------
+
         audio.play()
+
           .then(() => {
             playedCount += 1
           })
@@ -380,7 +424,13 @@ function AIMentor() {
   }, [currentUser])
 
   const handleMicClick = () => {
+    // Resume audio context on user gesture
+    if (audioAnalyser && audioAnalyser.context.state === 'suspended') {
+      audioAnalyser.context.resume()
+    }
+
     if (isSpeaking) {
+
       // Stop current audio immediately
       if (activeAudioRef.current) {
         activeAudioRef.current.pause()
@@ -402,6 +452,11 @@ function AIMentor() {
 
 
   const handleChatSend = async () => {
+    // Resume audio context on user gesture
+    if (audioAnalyser && audioAnalyser.context.state === 'suspended') {
+      audioAnalyser.context.resume()
+    }
+
     const val = chatInputRef.current?.value || ''
     const trimmed = val.trim()
     if (!trimmed) return
@@ -486,8 +541,9 @@ function AIMentor() {
               <ambientLight intensity={0.7} />
               <spotLight position={[10, 10, 10]} angle={1.8} penumbra={1} />
               <React.Suspense fallback={null}>
-                <MentorModel isSpeaking={isSpeaking} position={[0, -4, 0]} scale={3} />
+                <MentorModel isSpeaking={isSpeaking} analyser={audioAnalyser} position={[0, -4, 0]} scale={3} />
                 <ContactShadows opacity={0.4} scale={5} blur={2} far={4.5} />
+
                 <Environment preset="city" />
               </React.Suspense>
             </Canvas>

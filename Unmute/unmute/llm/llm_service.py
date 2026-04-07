@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, List, Tuple, Union, Dict, cast
 from dotenv import load_dotenv
 from google import genai
+from unmute.llm.rag_proxy import retrieve
 
 # Load .env
 _ENV_FILE = Path(__file__).parents[3] / ".env"
@@ -105,25 +106,15 @@ class LLMService:
                     )
             except Exception as e:
                 logger.warning(f"Config load failed: {e}")
+
     def retrieve_context(self, query: str) -> str:
-        import subprocess
         logger.info(f"Retrieving context from Qdrant for query: {query!r}")
-        rag_proxy_path = os.path.join(os.path.dirname(__file__), "rag_proxy.py")
         try:
-            process = subprocess.run(
-                ["python", rag_proxy_path, query],
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            if process.returncode == 0:
-                context = process.stdout.strip()
-                logger.info("Successfully retrieved context by executing rag_proxy.py")
-            else:
-                logger.error(f"Error executing rag_proxy.py: {process.stderr}")
-                context = ""
+            results = retrieve(query)
+            context = "\n".join(results)
+            logger.info("Successfully retrieved context by importing rag_proxy")
         except Exception as e:
-            logger.error(f"Exception executing rag_proxy.py: {e}")
+            logger.error(f"Error retrieving context via rag_proxy import: {e}")
             context = ""
         return context
 
@@ -267,11 +258,8 @@ class LLMService:
             return self._fallback_compaction(source)
 
         try:
-            if self.client is None:
-                 return self._fallback_compaction(source)
-                 
             # Use the new SDK for compaction too
-            response: Any = self.client.models.generate_content(  # type: ignore[union-attr]
+            response: Any = self.client.models.generate_content(
                 model=self.compaction_model or self.model,
                 contents=[
                     {
@@ -360,7 +348,7 @@ class LLMService:
                 {"role": "user", "parts": [{"text": system_content}]},
                 {"role": "model", "parts": [{"text": "Understood. I will act as your tutor."}]}
             ]
-            recent = chat_history[-10:] if len(chat_history) >= 10 else chat_history  # type: ignore[index]
+            recent = chat_history[-10:] if len(chat_history) >= 10 else chat_history
             for m in recent:
                 role = self._role_for_llm(str(m.get("role", "user")))
                 messages.append({"role": role, "parts": [{"text": str(m.get("text", ""))}]})
@@ -407,15 +395,13 @@ class LLMService:
         if self.client is None:
             return "AI is not configured. Please check your API key."
         try:
-            # Fix: calling _build_messages which is a method, not a static function
-            messages = await asyncio.to_thread(self._build_messages, message, chat_history)  # type: ignore[arg-type]
+            messages = await asyncio.to_thread(self._build_messages, message, chat_history)
             
             # Using the new SDK
             response: Any = await asyncio.to_thread(
-                self.client.models.generate_content,  # type: ignore[union-attr]
+                self.client.models.generate_content,
                 model=self.model,
                 contents=messages,
-                # config is a dict in the new SDK generate_content
                 config={"temperature": 0}
             )
             
@@ -447,6 +433,7 @@ class LLMService:
         except Exception as e:
             logger.error(f"LLM Stream Error: {e}")
             yield "Sorry, I ran into a problem. Please try again."
+
 
 # Singleton instance
 _BASE_DIR = Path(__file__).parents[2]
