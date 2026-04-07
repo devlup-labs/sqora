@@ -1,5 +1,0 @@
-# Vercel API serverless requirements (backend only — Manim runs separately)
-fastapi>=0.115.12
-python-dotenv>=1.0.0
-google-genai>=1.0.0
-requests>=2.31.0

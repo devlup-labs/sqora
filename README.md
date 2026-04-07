@@ -9,65 +9,54 @@ SQORA is an AI-powered competitive exam preparation platform for JEE/NEET aspira
 | AI Mentor | Chat with a Gemini-powered tutor that explains concepts, solves doubts, and maintains context across turns |
 | Manim Animations | AI explanations trigger auto-generated animated videos rendered with [Manim](https://www.manim.community/) |
 | Mock Exams | Take timed exams with auto-grading and review |
-| Contest Arena | Browse upcoming and past contests with scheduling and registration support |
-| Context Compaction | Rolling Gemini-based context summarization keeps long chats cheap while preserving full visible history |
+| Contest Arena | Browse upcoming and past contests |
+| Context Compaction | Rolling Gemini-based context summarization keeps long chats efficient |
 | Text-to-Speech | Local TTS server delivers narrated audio explanations |
-| Admin Panel | Configure mentor greetings, voice settings, exam highlights, and platform options |
+| Admin Panel | Configure mentor greetings, voice settings, and platform options |
 | 3D Landing Page | React Three Fiber-powered interactive landing page |
-| Google Auth | Firebase-based Google Sign-In — no passwords needed, sign-in and sign-up unified |
-| Multi-User Support | Each user gets fully isolated data scoped by Firebase UID |
-| Token Auth | Firebase ID tokens verified server-side — no user can access another user's data |
+| Google Auth | Firebase Google Sign-In — unified sign-in/sign-up, no passwords |
+| Multi-User Support | Fully isolated data per Firebase UID on the server |
+| Token Auth | Firebase ID tokens verified server-side — strict data isolation |
 
 ## Architecture
 
 ```text
-                    ┌─────────────┐
-                    │   Vercel    │
-                    │  (Frontend  │
-                    │  + Backend) │
-                    └──────┬──────┘
-                           │
-          ┌────────────────┴────────────────┐
-          │                                 │
-   React SPA (Static)           FastAPI Serverless (/api/*)
-     (Frontend/dist)              (api/index.py → Unmute/)
-          │                                 │
-          └──── Firebase Auth ──────────────┘
-                    │
-          ┌─────────┴─────────┐
-          │                   │
-    Firestore (chat)    Firebase Auth (tokens)
-          
-          ┌────────────────────────┐
-          │  Manim Worker          │
-          │  (RAID server / VPS)   │
-          │  Watches incoming_jobs/│
-          │  Serves video files    │
-          └────────────────────────┘
+┌──────────────────────────────┐       ┌─────────────────────────────────────┐
+│        Vercel (CDN)          │       │         IITJ RAID Server            │
+│                              │       │                                     │
+│   React SPA (static build)   │──────▶│  FastAPI Backend  (port 8000)       │
+│                              │       │  Manim Worker     (background)      │
+│  VITE_API_URL = raid server  │       │  TTS Server       (port 8089)       │
+└──────────────────────────────┘       └─────────────────────────────┬───────┘
+                                                                     │
+                                              ┌──────────────────────┘
+                                              │  Firebase (Google Cloud)
+                                              │    • Authentication (JWT)
+                                              └──────────────────────
 ```
 
 ### Services
 
 | Service | Stack | Deployment |
 |---------|-------|------------|
-| Frontend | React 18, Vite, React Router, Three.js, KaTeX | Vercel (static) |
-| Backend API | FastAPI, Gemini, Firebase Admin | Vercel (serverless Python) |
-| Manim Worker | Python, Manim 0.19, Gemini code gen | RAID server / any VPS |
-| TTS Server | Python (Pocket-TTS) | RAID server / any VPS |
+| Frontend | React 18, Vite, React Router, Three.js, KaTeX | **Vercel** |
+| Backend API | FastAPI, Gemini, Firebase Auth | **RAID Server** |
+| Manim Worker | Python, Manim 0.19, Gemini code gen | **RAID Server** |
+| TTS Server | Python (Pocket-TTS) | **RAID Server** |
 
-> **Note:** Manim requires LaTeX, FFmpeg, and long-running processes — it cannot run on Vercel. The worker runs on a persistent server and serves video files through its own endpoint or uploads to cloud storage.
-
-### User Data Architecture
+### User Data
 
 ```text
-user_data/             ← lives on the Manim/RAID server
+user_data/               ← on RAID server
 └── {firebase_uid}/
-    ├── chat_history.json     # Synced to Firestore on every message
-    ├── ai_cache.json         # AI response cache
-    ├── video_cache.json      # Video ID lookup cache
-    ├── incoming_jobs/        # Manim job queue
-    └── rendered_videos/      # Generated MP4 files
+    ├── chat_history.json
+    ├── ai_cache.json
+    ├── video_cache.json
+    ├── incoming_jobs/        ← Manim job queue
+    └── rendered_videos/      ← generated MP4 files
 ```
+
+---
 
 ## Getting Started (Local Development)
 
@@ -75,7 +64,7 @@ user_data/             ← lives on the Manim/RAID server
 
 - Node.js 18+
 - Python 3.12+
-- ffmpeg (required by Manim for video generation)
+- ffmpeg (required by Manim)
 
 ### 1. Clone and Install
 
@@ -89,20 +78,22 @@ cd Frontend && npm install && cd ..
 # Backend
 python3 -m venv .venv
 source .venv/bin/activate
-pip install fastapi uvicorn python-dotenv google-genai requests
 pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment Variables
 
-Create a `.env` file in the project root:
+Copy the example and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
 
 ```env
-# ── AI ─────────────────────────────────────────
-GEMINI_API_KEY=your_gemini_api_key
+GEMINI_API_KEY=your_api_key
 
-# ── Firebase Client SDK ─────────────────────────
-# Get from Firebase Console → Project Settings → General → Your apps
 VITE_FIREBASE_API_KEY=...
 VITE_FIREBASE_AUTH_DOMAIN=...
 VITE_FIREBASE_PROJECT_ID=...
@@ -111,21 +102,20 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=...
 VITE_FIREBASE_APP_ID=...
 VITE_FIREBASE_MEASUREMENT_ID=...
 
-# ── Local dev only ──────────────────────────────
-# URL of locally running backend (so frontend can hit it on a different port)
+# For local dev: frontend hits backend on port 8000
 VITE_API_URL=http://localhost:8000
 ```
 
 ### 3. Run Locally
 
 ```bash
-# Terminal 1 — Frontend dev server
+# Terminal 1 — Frontend
 cd Frontend && npm run dev
 
 # Terminal 2 — Backend API
 ./start_backend.sh
 
-# Terminal 3 — Manim Animation Worker
+# Terminal 3 — Manim Worker
 ./start_manim.sh
 
 # Terminal 4 — TTS Server (optional)
@@ -134,9 +124,10 @@ cd Frontend && npm run dev
 
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:8000`
-- TTS: `http://localhost:8089`
 
-## Deploying to Vercel
+---
+
+## Deploying to Vercel (Frontend Only)
 
 ### 1. Push to GitHub
 
@@ -148,62 +139,112 @@ git push origin main
 
 1. Go to [vercel.com/new](https://vercel.com/new)
 2. Import the **sqora** repository
-3. Vercel will auto-detect `vercel.json` at the root
+3. Vercel reads `vercel.json` automatically — no extra config needed
 
 ### 3. Set Environment Variables in Vercel Dashboard
 
-Under **Project → Settings → Environment Variables**, add all of the following:
+Under **Project → Settings → Environment Variables**, add:
 
 | Variable | Value |
 |----------|-------|
-| `GEMINI_API_KEY` | Your Gemini API key |
 | `VITE_FIREBASE_API_KEY` | From Firebase Console |
 | `VITE_FIREBASE_AUTH_DOMAIN` | `your-project.firebaseapp.com` |
-| `VITE_FIREBASE_PROJECT_ID` | Your Firebase project ID |
+| `VITE_FIREBASE_PROJECT_ID` | Your project ID |
 | `VITE_FIREBASE_STORAGE_BUCKET` | `your-project.appspot.com` |
 | `VITE_FIREBASE_MESSAGING_SENDER_ID` | Sender ID |
 | `VITE_FIREBASE_APP_ID` | App ID |
 | `VITE_FIREBASE_MEASUREMENT_ID` | Measurement ID |
+| `VITE_API_URL` | Public URL of your RAID server backend, e.g. `https://sqora.iitj.ac.in` |
 
-> **Do NOT set `VITE_API_URL`** — on Vercel the frontend and API share the same domain, so relative `/api/*` paths work automatically.
+> **`VITE_API_URL` is required on Vercel** — it tells the frontend where to send API requests.
 
-### 4. Add Your Vercel Domain to Firebase
+### 4. Add Vercel Domain to Firebase
 
-Firebase Console → **Authentication** → **Authorized domains** → Add your `*.vercel.app` domain.
+Firebase Console → **Authentication** → **Authorized domains** → Add your `*.vercel.app` URL.
 
-### 5. Enable Full Token Verification (Recommended for Production)
+---
 
-By default the backend falls back to accepting unverified JWT claims in dev mode. To enable cryptographic verification:
+## Deploying the Backend on IITJ RAID Server
 
-1. Firebase Console → `sqora-devlups` → Project Settings → **Service Accounts**
-2. Click **"Generate new private key"** and download the JSON
-3. Add the entire JSON as an env variable `FIREBASE_SERVICE_ACCOUNT_JSON` in Vercel (**never commit it**)
-4. Add `pip install firebase-admin` to `api/requirements.txt`
-
-### 6. Deploy the Manim Worker Separately
-
-The Manim animation worker must run on a persistent server (RAID, VPS, etc.):
+### 1. Clone and Install
 
 ```bash
-# On your server
 git clone https://github.com/devlup-labs/sqora.git
 cd sqora
-source .venv/bin/activate
-./start_manim.sh
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-The worker watches `user_data/*/incoming_jobs/` and renders videos that are served via the backend's `/api/users/{uid}/videos/{id}` endpoint — which also runs on the same server if you self-host the backend.
+### 2. Configure `.env`
+
+Same as local dev, but **without** `VITE_*` variables (those are frontend-only):
+
+```env
+GEMINI_API_KEY=your_key
+```
+
+### 3. Enable HTTPS + CORS via Nginx
+
+The frontend is on Vercel and the backend is on the RAID server — this is a **cross-origin** setup. The backend already includes CORS middleware. Expose it through Nginx:
+
+```nginx
+server {
+    listen 80;
+    server_name your-raid-domain-or-ip;
+
+    location /api/ {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # Required for SSE streaming
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+        # Allow Vercel frontend
+        add_header 'Access-Control-Allow-Origin' 'https://your-app.vercel.app' always;
+        add_header 'Access-Control-Allow-Headers' 'Authorization, Content-Type' always;
+    }
+}
+```
+
+> For HTTPS (strongly recommended): `sudo certbot --nginx -d your-domain.com`
+
+### 4. Enable Full Token Verification
+
+For production security, enable cryptographic token verification:
+
+1. Firebase Console → Project Settings → **Service Accounts** → **Generate new private key**
+2. Save as `Unmute/firebase-service-account.json`  
+   ⚠️ **Never commit this file — it is in `.gitignore`**
+3. `pip install firebase-admin`
+4. Restart the backend
+
+### 5. Run Services
+
+```bash
+nohup ./start_backend.sh &
+nohup ./start_manim.sh &
+nohup ./start_tts.sh &   # optional
+```
+
+Or use `tmux` / `systemd` for persistent sessions.
+
+---
 
 ## Authentication
 
-- Users sign in with Google via Firebase — no passwords
-- Firebase issues a short-lived JWT (ID token)  
-- Every API request carries it in `Authorization: Bearer <token>`
-- Backend verifies it and extracts `uid` to scope all data access
+- Users authenticate with Google via Firebase — no passwords
+- Firebase issues a short-lived JWT (ID token) on login
+- Every API request carries it as `Authorization: Bearer <token>`
+- Backend verifies the token and extracts `uid` to scope all data
+- All data lives under `user_data/{uid}/` — users can only access their own
+
+---
 
 ## API Reference
 
-All endpoints under `/api/` require `Authorization: Bearer <firebase_id_token>` unless otherwise noted.
+All chat and user endpoints require `Authorization: Bearer <firebase_id_token>`.
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
@@ -217,56 +258,19 @@ All endpoints under `/api/` require `Authorization: Bearer <firebase_id_token>` 
 | `GET` | `/api/contests` | — | List contests |
 | `GET` | `/api/exams/{code}` | — | Fetch exam questions |
 | `GET/PUT` | `/api/admin/config` | — | Read/update platform settings |
-| `POST` | `/api/tts` | — | TTS proxy |
 
-## Self-Hosting on IITJ RAID Server (without Vercel)
-
-If you prefer to self-host the full stack behind Nginx:
-
-### 1. Build the Frontend
-
-```bash
-cd Frontend && npm run build   # outputs to Frontend/dist/
-```
-
-### 2. Configure Nginx
-
-```nginx
-server {
-    listen 80;
-    server_name your-ip-or-domain;
-
-    location / {
-        root /path/to/sqora/Frontend/dist;
-        try_files $uri /index.html;
-    }
-
-    location /api/ {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Authorization $http_authorization;
-        proxy_set_header Host $host;
-        proxy_buffering off;
-        proxy_cache off;
-    }
-}
-```
-
-### 3. Run Services
-
-```bash
-nohup ./start_backend.sh &
-nohup ./start_manim.sh &
-nohup ./start_tts.sh &
-```
+---
 
 ## LLM Context Compaction
 
-Long conversations are compacted before sending to Gemini:
+Long conversations are summarized before sending to Gemini:
 
-1. Full chat history is always stored and shown in UI
+1. Full history is always stored locally and shown in UI
 2. LLM receives: compacted memory + recent turns + new message
-3. When estimated token count exceeds `trigger_tokens`, old context is summarized
-4. Configure in `Unmute/config.json` under `llm.context_compaction`
+3. When estimated token count exceeds `trigger_tokens`, old context is summarized via Gemini
+4. Configure in `Unmute/config.json` → `llm.context_compaction`
+
+---
 
 ## Tech Stack
 
@@ -277,6 +281,7 @@ Long conversations are compacted before sending to Gemini:
 | Animation | Manim 0.19, Gemini code generation, ffmpeg |
 | Auth | Firebase Authentication (Google Sign-In) |
 | TTS | Pocket-TTS |
+| Deployment | Vercel (frontend), IITJ RAID Server (backend + worker) |
 
 ## License
 
