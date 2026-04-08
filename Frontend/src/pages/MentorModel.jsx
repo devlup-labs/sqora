@@ -24,6 +24,55 @@ const VISEME_MAP = {
   'sil': { mouthOpen: 0.0, mouthStretch: 0.0 },  // silence
 }
 
+const VISEME_ALIASES = {
+  A: 'aa',
+  AA: 'aa',
+  AH: 'aa',
+  EH: 'E',
+  ER: 'RR',
+  IY: 'I',
+  IH: 'I',
+  EY: 'E',
+  OW: 'O',
+  AO: 'O',
+  UH: 'U',
+  UW: 'U',
+  B: 'PP',
+  P: 'PP',
+  M: 'PP',
+  S: 'SS',
+  Z: 'SS',
+  SH: 'CH',
+  JH: 'CH',
+  F: 'FF',
+  V: 'FF',
+  K: 'kk',
+  G: 'kk',
+  N: 'nn',
+  L: 'nn',
+  R: 'RR',
+  D: 'DD',
+  T: 'DD',
+}
+
+function resolveVisemeKey(rawViseme) {
+  if (!rawViseme) return 'sil'
+  const raw = String(rawViseme).trim()
+  if (!raw) return 'sil'
+
+  if (VISEME_MAP[raw]) return raw
+
+  const upper = raw.toUpperCase()
+  if (VISEME_MAP[upper]) return upper
+  if (VISEME_ALIASES[upper]) return VISEME_ALIASES[upper]
+
+  const lower = raw.toLowerCase()
+  if (VISEME_MAP[lower]) return lower
+  if (lower === 'sil' || lower === 'sp' || lower === 'pau' || lower === 'silence') return 'sil'
+
+  return null
+}
+
 export function MentorModel({ isSpeaking, visemeSchedule, ...props }) {
   const group = useRef()
   const { nodes, materials, animations } = useGLTF('/models/julia.glb')
@@ -87,7 +136,10 @@ export function MentorModel({ isSpeaking, visemeSchedule, ...props }) {
           break
         }
       }
-      const weights = VISEME_MAP[activeViseme] || VISEME_MAP['sil']
+      const visemeKey = resolveVisemeKey(activeViseme)
+      const weights = visemeKey
+        ? VISEME_MAP[visemeKey] || VISEME_MAP.sil
+        : { mouthOpen: 0.35, mouthStretch: 0.2 }
       targetMouthRef.current = weights
     } else if (!isSpeaking) {
       targetMouthRef.current = { mouthOpen: 0, mouthStretch: 0 }

@@ -38,6 +38,44 @@ function stripForTTS(text) {
     .trim()
 }
 
+function decodeBase64ToBlobUrl(base64Audio, mimeType = 'audio/wav') {
+  if (!base64Audio || typeof base64Audio !== 'string') return null
+  const bin = atob(base64Audio)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+}
+
+function toSeconds(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return n > 20 ? n / 1000 : n
+}
+
+function normalizeVisemeSchedule(data) {
+  const rawVisemes = data?.visemes
+
+  if (Array.isArray(rawVisemes) && rawVisemes.length > 0 && typeof rawVisemes[0] === 'object') {
+    return rawVisemes
+      .map((item) => ({
+        viseme: item?.viseme || item?.name || item?.id || 'sil',
+        time: toSeconds(item?.time ?? item?.start ?? 0),
+        duration: Math.max(toSeconds(item?.duration ?? item?.len ?? 0.1), 0.04),
+      }))
+      .sort((a, b) => a.time - b.time)
+  }
+
+  if (Array.isArray(rawVisemes) && rawVisemes.length > 0) {
+    return rawVisemes.map((v, idx) => ({
+      viseme: v,
+      time: toSeconds(data?.vtimes?.[idx] ?? 0),
+      duration: Math.max(toSeconds(data?.vdurations?.[idx] ?? 0.1), 0.04),
+    }))
+  }
+
+  return []
+}
+
 
 function AIMentor() {
   const [isSpeaking, setIsSpeaking] = useState(false)
@@ -72,6 +110,7 @@ function AIMentor() {
   const [audioAnalyser, setAudioAnalyser] = useState(null)
   // HeadTTS viseme schedule
   const [visemeSchedule, setVisemeSchedule] = useState(null)
+  const activeFetchAbortRef = useRef(null)
 
   // Keep a fresh token for video/SSE URLs (refreshed whenever user changes)
   useEffect(() => {
@@ -149,103 +188,125 @@ function AIMentor() {
     if (!voiceEnabled || !text.trim()) return
     stopSpeakRef.current = false
     setIsSpeaking(true)
+
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const HEADTTS_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_TIMEOUT_MS || 45000)
+    const HEADTTS_MAX_RETRIES = Number(import.meta.env.VITE_HEADTTS_MAX_RETRIES || 5)
+    const HEADTTS_BACKOFF_MS = Number(import.meta.env.VITE_HEADTTS_BACKOFF_MS || 1200)
     
-    const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [text]
+    const rawSentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text]
     const sentences = rawSentences.filter(s => s.trim().length > 1)
     const finalSentences = sentences.length > 0 ? sentences : [text]
 
     console.log(`[TTS] Sequential HeadTTS for ${finalSentences.length} chunks`)
 
     const HEADTTS_URL = import.meta.env.VITE_TTS_URL || ''
-    let ttsWorks = true
+    if (!HEADTTS_URL) {
+      console.warn('[TTS] VITE_TTS_URL is not configured; skipping speech.')
+      setIsSpeaking(false)
+      setVisemeSchedule(null)
+      return
+    }
 
-    for (let i = 0; i < finalSentences.length; i++) {
-      if (stopSpeakRef.current) break
-      const sentence = finalSentences[i]
-      const cleanSentence = stripForTTS(sentence)
-      if (!cleanSentence.trim()) continue
+    const synthesizeChunkWithRetry = async (chunkText, chunkIndex) => {
+      let lastError = null
 
-      let result = null
-      
-      // Try synthesis for this chunk
-      try {
+      for (let attempt = 1; attempt <= HEADTTS_MAX_RETRIES; attempt++) {
+        if (stopSpeakRef.current) return null
+
         const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 8000)
-        const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            input: cleanSentence,
-            voice: 'af_heart',
-            language: 'en-us',
-            speed: 1,
-            audioEncoding: 'wav'
+        activeFetchAbortRef.current = controller
+        const timeoutMs = HEADTTS_TIMEOUT_MS + (attempt - 1) * 3000
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+        try {
+          const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              input: chunkText,
+              voice: 'af_heart',
+              language: 'en-us',
+              speed: 1,
+              audioEncoding: 'wav'
+            })
           })
-        })
-        clearTimeout(timer)
-        if (res.ok) {
+
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`)
+          }
+
           const data = await res.json()
-          if (data.audio) {
-            const bin = atob(data.audio); const bytes = new Uint8Array(bin.length)
-            for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j)
-            const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
-            const visemes = (data.visemes || []).map((v, idx) => ({
-              viseme: v, time: (data.vtimes?.[idx] || 0) / 1000, duration: (data.vdurations?.[idx] || 100) / 1000,
-            }))
-            result = { blobUrl, visemes }
+          const blobUrl = decodeBase64ToBlobUrl(data?.audio, 'audio/wav')
+          if (!blobUrl) {
+            throw new Error('No audio payload in HeadTTS response')
+          }
+
+          const visemes = normalizeVisemeSchedule(data)
+          return { blobUrl, visemes }
+        } catch (e) {
+          lastError = e
+          if (stopSpeakRef.current) return null
+          if (attempt < HEADTTS_MAX_RETRIES) {
+            const backoff = HEADTTS_BACKOFF_MS * attempt
+            console.warn(`[TTS] Chunk ${chunkIndex + 1} attempt ${attempt} failed; retrying in ${backoff}ms`, e)
+            await wait(backoff)
+          }
+        } finally {
+          clearTimeout(timer)
+          if (activeFetchAbortRef.current === controller) {
+            activeFetchAbortRef.current = null
           }
         }
-      } catch (e) {
-        console.warn(`[TTS] HeadTTS chunk ${i+1} failed`, e)
       }
 
-      if (stopSpeakRef.current) break
+      console.error(`[TTS] Chunk ${chunkIndex + 1} failed after ${HEADTTS_MAX_RETRIES} attempts`, lastError)
+      return null
+    }
 
-      if (result) {
-        // SUCCESS: Play HeadTTS Chunk
+    try {
+      for (let i = 0; i < finalSentences.length; i++) {
+        if (stopSpeakRef.current) break
+        const sentence = finalSentences[i]
+        const cleanSentence = stripForTTS(sentence)
+        if (!cleanSentence.trim()) continue
+
+        const result = await synthesizeChunkWithRetry(cleanSentence, i)
+        if (stopSpeakRef.current) break
+
+        if (!result) {
+          if (i === 0) {
+            console.error('[TTS] Unable to synthesize first chunk with HeadTTS. Skipping voice instead of browser fallback.')
+            break
+          }
+          console.warn('[TTS] Skipping broken chunk and continuing with next sentence...')
+          continue
+        }
+
         await new Promise((resolve) => {
           setVisemeSchedule(result.visemes)
           const audio = new Audio(result.blobUrl)
           activeAudioRef.current = audio
-          audio.onended = () => { URL.revokeObjectURL(result.blobUrl); setVisemeSchedule(null); resolve() }
-          audio.onerror = () => { URL.revokeObjectURL(result.blobUrl); setVisemeSchedule(null); resolve() }
+          audio.onended = () => {
+            URL.revokeObjectURL(result.blobUrl)
+            setVisemeSchedule(null)
+            resolve()
+          }
+          audio.onerror = () => {
+            URL.revokeObjectURL(result.blobUrl)
+            setVisemeSchedule(null)
+            resolve()
+          }
           audio.play().catch(resolve)
         })
-      } else {
-        // FAIL: No fallback mid-response as requested. 
-        // If it's the very first chunk, we can global-fallback to Web Speech
-        if (i === 0) {
-          ttsWorks = false
-          break
-        }
-        // Otherwise, just skip this broken sentence and continue with next HeadTTS chunk
-        console.warn('[TTS] Skipping broken chunk...')
       }
+    } finally {
+      setIsSpeaking(false)
+      setVisemeSchedule(null)
+      activeAudioRef.current = null
+      activeFetchAbortRef.current = null
     }
-
-    // GLOBAL FALLBACK (Only if HeadTTS failed starting the very first sentence)
-    if (!ttsWorks && !stopSpeakRef.current) {
-      const synth = window.speechSynthesis
-      if (synth) {
-        const fullClean = stripForTTS(text)
-        await new Promise((resolve) => {
-          synth.cancel()
-          const utt = new SpeechSynthesisUtterance(fullClean)
-          utt.rate = 1; utt.pitch = 1.1
-          const vs = synth.getVoices()
-          const fv = vs.find(v => /female|zira|samantha|victoria/i.test(v.name) && v.lang?.startsWith('en'))
-          if (fv) utt.voice = fv
-          utt.onend = resolve
-          utt.onerror = resolve
-          synth.speak(utt)
-        })
-      }
-    }
-
-    setIsSpeaking(false)
-    setVisemeSchedule(null)
-    activeAudioRef.current = null
   }
 
 
@@ -406,12 +467,11 @@ function AIMentor() {
     if (isSpeaking) {
       // Stop all audio immediately
       stopSpeakRef.current = true
+      try { activeFetchAbortRef.current?.abort() } catch {}
       if (activeAudioRef.current) {
         try { activeAudioRef.current.pause() } catch {}
         activeAudioRef.current = null
       }
-      window.speechSynthesis?.cancel()
-      if (htResolveRef.current) { htResolveRef.current(null); htResolveRef.current = null }
       setIsSpeaking(false)
       setVisemeSchedule(null)
       return
