@@ -34,59 +34,107 @@ GEMINI_URL = (
 MANIM_OUTPUT_DIR = os.path.join(BASE, "media", "videos")
 
 MANIM_CODE_PROMPT = r"""
-You are a Manim Community Edition (v0.19) code generator for educational animations.
+You are a Manim Community Edition (v0.19) code generator that creates RICH VISUAL ANIMATIONS for education.
 
-Convert the following educational content into a **single, self-contained Manim scene**.
+Your PRIMARY goal is to create **visual diagrams, graphs, shapes, and animated illustrations** — NOT text slides.
+Text should only appear as short titles, labels, and annotations on visuals.
 
-The output frame is 14.22 × 8 Manim units (config.frame_width × config.frame_height).
+Convert the following educational content into a **single, self-contained Manim scene** with rich visuals.
+
+The output frame is 14.22 x 8 Manim units (config.frame_width x config.frame_height).
 Keep ALL content within a safe zone of 1 unit from every edge.
 
-STRICT RULES — follow every one:
+═══════════════════════════════════════════
+  VISUALIZATION-FIRST RULES (MOST IMPORTANT)
+═══════════════════════════════════════════
+
+V1. **EVERY scene section MUST contain at least one visual element** from this list:
+    - Geometric shapes: `Circle`, `Square`, `Rectangle`, `Triangle`, `Polygon`, `Dot`, `Arrow`, `Line`, `DashedLine`, `Arc`, `Annulus`, `Star`
+    - Graphs & Plots: `Axes`, `NumberPlane`, `NumberLine`, axes.plot(lambda x: ...), axes.get_area()
+    - Bar charts: `BarChart`
+    - Arrows & Vectors: `Arrow`, `Vector`, `DoubleArrow`
+    - Braces & Labels: `Brace`, `BraceBetweenPoints`
+    - Grouping: `VGroup`, `SurroundingRectangle`, `BackgroundRectangle`
+    - Tables: `Table`, `MathTable`
+
+V2. **Choose the RIGHT visualization for the topic:**
+    - Math functions/calculus → use `Axes` + `axes.plot()` with animated curves
+    - Physics/forces/motion → use `Arrow`, `Vector`, `Dot` with `.animate.shift()` for movement
+    - Chemistry/structures → use `Circle` (atoms) + `Line` (bonds) arranged in molecular layouts
+    - Comparisons/statistics → use `BarChart` or grouped `Rectangle` bars
+    - Processes/steps → use connected shapes with `Arrow` between them (flowchart style)
+    - Geometry → use actual geometric `Mobject`s with labels and measurements
+    - Relationships/hierarchies → use `Circle`/`Rectangle` nodes with `Arrow`/`Line` edges
+    - Number concepts → use `NumberLine` with `Dot` markers
+
+V3. **Animate visuals dynamically:**
+    - Use `Create`, `DrawBorderThenFill`, `GrowFromCenter`, `GrowArrow` for shape entrances
+    - Use `axes.plot()` with `Create(graph)` to draw curves
+    - Use `.animate.shift()`, `.animate.scale()`, `.animate.set_color()` for transformations
+    - Use `TracedPath` or `MoveAlongPath` for motion along curves
+    - Use `Transform` / `ReplacementTransform` to morph one shape into another
+    - Use `Indicate`, `Flash`, `Circumscribe` to highlight key elements
+    - Use `FadeIn(shift=UP)` or `FadeIn(shift=LEFT)` for directional reveals
+
+V4. **Text is ONLY for labels and annotations, NOT the main content:**
+    - One short title (font_size=36) at the top per section
+    - Small labels (font_size=20-24) positioned next to shapes using `.next_to()`
+    - NEVER have a frame that is ONLY text — always pair text with a visual element
+    - Maximum 3-4 short text labels per frame
+
+═══════════════════════════════════════════
+  TECHNICAL RULES (MUST FOLLOW)
+═══════════════════════════════════════════
 
 1. Start with `from manim import *`
 2. Define exactly ONE class called `GeneratedScene(Scene):`
 3. Set background: `self.camera.background_color = "#0a1224"` in `construct()`
-4. Use `Text(...)` for explanations (**never** use `Tex` for plain text).
+4. Text rules:
+   - Use `Text(...)` for labels (**never** use `Tex` for plain text)
    - **CRITICAL**: NEVER use `width=` kwarg in Text() — it does not exist.
-     Instead call `.scale_to_fit_width(config.frame_width - 2)` AFTER creating the Text object:
-       `t = Text("Hello", font_size=28); t.scale_to_fit_width(config.frame_width - 2)`
-   - Keep each `Text()` to max ~60 characters. For longer content, split into MULTIPLE
-     `Text()` objects grouped with `VGroup(...).arrange(DOWN, buff=0.3)`.
-   - Use `font_size=24` for body text, `font_size=36` for titles.
-5. Use `MathTex(...)` for LaTeX equations/formulas.
-   - **CRITICAL LaTeX rules for MathTex:**
-     - NEVER use `\text{{}}` — it causes compilation errors. Use plain `Text()` objects beside the equation instead.
-     - NEVER mix units or words inside MathTex. Keep MathTex ONLY for pure math: variables, operators, numbers.
-     - For units like "kg", "m/s", "MeV", put them in a separate `Text()` positioned next to the equation.
-     - Use ONLY basic LaTeX: `^`, `_`, `\frac{{}}{{}}`, `\sqrt{{}}`, `\times`, `\cdot`, `\Delta`, `\sum`, `\int`, `\vec{{}}`, `\hat{{}}`.
-     - NEVER use `\textbf`, `\textit`, `\mathrm`, `\mbox`, `\hbox` inside MathTex.
-     - For long equations, use `font_size=32` and break across lines using `\\\\` inside an `aligned` environment.
-     - Always test: if the LaTeX string has English words in it, those words should be in a separate `Text()`, NOT in `MathTex()`.
-6. Use animations: `Write`, `FadeIn`, `FadeOut`, `Create`, `Transform`, `ReplacementTransform`
-7. Add `self.wait(1)` to `self.wait(2)` between sections so the viewer can read.
-8. Keep the total animation under 60 seconds (about 15-20 animation steps). Be concise — fewer steps renders faster.
-9. Use colors: `BLUE_C`, `YELLOW_C`, `GREEN_C`, `RED_C`, `WHITE`, `GREY_A` for variety.
-10. Position elements carefully — use `.to_edge()`, `.shift()`, `.next_to()` to avoid overlaps.
-    - Keep a margin of at least 1 unit from all screen edges.
-    - Use `VGroup(...).arrange(DOWN, buff=0.3)` to stack text blocks vertically.
-    - Center content vertically: `group.move_to(ORIGIN)` or `group.next_to(title, DOWN, buff=0.6)`
-11. Clear the screen with `self.play(FadeOut(*self.mobjects))` between major sections.
-12. DO NOT use any external files, images, SVGs, or custom fonts.
+     Instead call `.scale_to_fit_width(config.frame_width - 2)` AFTER creating the Text object.
+   - Keep each `Text()` under 50 characters. Split longer content into multiple `Text()` objects.
+   - Use `font_size=20` for labels, `font_size=28` for subtitles, `font_size=36` for titles.
+5. MathTex rules:
+   - Use `MathTex(...)` ONLY for pure math: variables, operators, numbers.
+   - NEVER use `\text{{}}`, `\textbf`, `\textit`, `\mathrm`, `\mbox`, `\hbox` inside MathTex.
+   - For units like "kg", "m/s", put them in a separate `Text()` next to the equation.
+   - Use ONLY: `^`, `_`, `\frac{{}}{{}}`, `\sqrt{{}}`, `\times`, `\cdot`, `\Delta`, `\sum`, `\int`, `\vec{{}}`, `\hat{{}}`
+6. Animations: `Write`, `FadeIn`, `FadeOut`, `Create`, `DrawBorderThenFill`, `Transform`, `ReplacementTransform`, `GrowFromCenter`, `GrowArrow`
+7. Add `self.wait(1)` to `self.wait(2)` between sections.
+8. Keep total animation under 60 seconds (~12-15 animation steps). Be concise.
+9. Colors: `BLUE_C`, `YELLOW_C`, `GREEN_C`, `RED_C`, `WHITE`, `GREY_A`, `ORANGE`, `PURPLE_C`, `TEAL_C`, `PINK`
+10. Position carefully — use `.to_edge()`, `.shift()`, `.next_to()` to avoid overlaps.
+    Keep 1 unit margin from all edges.
+11. Clear screen with `self.play(FadeOut(*self.mobjects))` between major sections.
+12. DO NOT use external files, images, SVGs, or custom fonts.
 13. DO NOT use `Tex()` — only `Text()` and `MathTex()`.
-14. Output ONLY valid Python code. No markdown fences, no comments outside the code, no explanations.
-15. Structure each section as: Title → Key points (2-3 short lines in a VGroup) → Equation (if any) → Clear screen → Next section.
-16. NEVER put a long paragraph in a single `Text()`. Break content into bite-sized pieces across multiple frames.
-17. **CRITICAL**: Do NOT add ANY explanatory text, comments, or [instruction] tags after the code ends. Output ONLY the Python code itself.
-18. CRITICAL STRING RULES:
+14. Output ONLY valid Python code. No markdown fences, no explanations.
+15. CRITICAL STRING RULES:
     - NEVER include line breaks inside Text("...")
-    - NEVER include unescaped apostrophes like: A's → use: As or A\'s
+    - NEVER include unescaped apostrophes: use As instead of A's
     - Each Text() must be a SINGLE LINE string
+16. **CRITICAL**: Do NOT add ANY explanatory text or [instruction] tags after the code.
+
+═══════════════════════════════════════════
+  EXAMPLE STRUCTURE (follow this pattern)
+═══════════════════════════════════════════
+
+Section flow: Title → Visual diagram/graph with labels → Animate key insight → Clear → Next section
+
+Example for "Newtons Second Law":
+  - Section 1: Title "Newtons Second Law" + Arrow showing force on a Rectangle (object)
+    with labels "F", "m", "a" next to relevant parts
+  - Section 2: Axes showing F vs a graph (linear), plotting the line, adding label "F = ma"
+  - Section 3: Two scenarios side by side — small mass (small Rectangle) big acceleration
+    vs big mass (big Rectangle) small acceleration, animated with `.animate.shift()`
+
 ## Topic: {topic}
 
 ## Content to animate:
 {response_text}
 
-REMEMBER: Output ONLY the Python code. No explanations before or after. No [instruction] tags. Just pure Python code.
+REMEMBER: Output ONLY Python code. Make it VISUAL — shapes, graphs, diagrams, animations. NOT text slides.
 """
 
 

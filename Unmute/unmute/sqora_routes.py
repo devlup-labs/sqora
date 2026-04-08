@@ -156,6 +156,8 @@ _admin_config: dict[str, object] = {
 }
 
 _contests_upcoming = [
+    {"code": "JEE-DEMO",  "name": "JEE Main Demo Paper – Full PCM Syllabus", "start": "Live Now", "length": "03:00", "beforeStart": "Started", "beforeReg": "Open"},
+    {"code": "NEET-DEMO", "name": "NEET Demo Paper – Full Syllabus",        "start": "Live Now", "length": "03:00", "beforeStart": "Started", "beforeReg": "Open"},
     {"code": "NEET-M1", "name": "NEET Mock 1 – Physics, Chemistry, Biology", "start": "Jan/29/2026 20:05 UTC+5.5", "length": "03:00", "beforeStart": "2 days", "beforeReg": "1 day"},
     {"code": "JEE-M2",  "name": "JEE Main Mock 2 – PCM",                    "start": "Feb/02/2026 17:30 UTC+5.5", "length": "03:00", "beforeStart": "6 days", "beforeReg": "5 days"},
     {"code": "NEET-M2", "name": "NEET Mock 2 – Full syllabus",               "start": "Feb/05/2026 21:00 UTC+5.5", "length": "03:00", "beforeStart": "9 days", "beforeReg": "8 days"},
@@ -474,14 +476,15 @@ async def api_exam(code: str):
 # ---------------------------------------------------------------------------
 
 @router.post("/api/tts")
-async def proxy_tts(text: str = Form(...), voice: str = Form("alba")):
+async def proxy_tts(text: str = Form(...), voice: str = Form("af_bella")):
     _UNMUTE_DIR = Path(__file__).parents[1]
     config = _load_json(str(_UNMUTE_DIR / "config.json"), {})
     tts_url: str = config.get("tts", {}).get("url", "http://localhost:8089/tts")
     logger.info(f"[Proxy TTS] voice={voice} text={str(text)[:50]}... -> {tts_url}")
 
     def fetch_tts():
-        return requests.post(tts_url, data={"text": text, "voice_url": voice}, stream=True)
+        # Pocket-TTS HTTP API expects `voice` (not `voice_url`) for named voices.
+        return requests.post(tts_url, data={"text": text, "voice": voice}, stream=True)
 
     try:
         response = await asyncio.to_thread(fetch_tts)
