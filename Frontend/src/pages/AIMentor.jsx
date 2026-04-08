@@ -172,7 +172,7 @@ function AIMentor() {
         const fd = new FormData()
         fd.append('text', stripped)
         fd.append('voice_url', VOICE)
-        const res = await fetch('http://localhost:8089/tts', { method: 'POST', body: fd })
+        const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/tts`, { method: 'POST', body: fd })
         if (res.ok) {
           const buf = await res.arrayBuffer()
           return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))

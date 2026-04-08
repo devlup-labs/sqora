@@ -23,8 +23,14 @@ logging.basicConfig(
 # Initialize the main API Backend
 app = FastAPI(title="SQORA Backend Interface")
 
-# Allow CORS for local development
-CORS_ALLOW_ORIGINS = ["http://localhost", "http://localhost:3000", "http://localhost:5173"]
+# Allow CORS for local development and Vercel production
+CORS_ALLOW_ORIGINS = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://sqora.vercel.app",
+    "https://sqora-devlups.web.app",
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOW_ORIGINS,
