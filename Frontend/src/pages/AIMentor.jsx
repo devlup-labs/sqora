@@ -65,6 +65,8 @@ function AIMentor() {
   const [videoToken, setVideoToken] = useState('')
   const [videoSrc, setVideoSrc] = useState('')
   const [audioAnalyser, setAudioAnalyser] = useState(null)
+  // HeadTTS viseme schedule: array of { viseme, time } objects
+  const [visemeSchedule, setVisemeSchedule] = useState(null)
 
   // Keep a fresh token for video/SSE URLs (refreshed whenever user changes)
   useEffect(() => {
@@ -134,134 +136,112 @@ function AIMentor() {
     }
   }, [videoReady])
 
-  // ----- TTS: parallel sentence pipeline — direct to port 8089, no proxy -----
+  // HeadTTS URL (env var VITE_TTS_URL points to the HeadTTS server exposed via Cloudflare)
+  const HEADTTS_URL = import.meta.env.VITE_TTS_URL || import.meta.env.VITE_API_URL || ''
+
+  // ----- TTS: HeadTTS with Kokoro neural voice + viseme lip sync -----
   const speakTextPipelined = async (text) => {
     if (!voiceEnabled || !text.trim()) return
     setIsSpeaking(true)
 
-    // --- Prep AudioContext for vSync ---
-    let analyser = audioAnalyser
-    if (!analyser) {
+    // Ensure AudioContext is ready (needed for Web Audio playback)
+    let audioctx = audioAnalyser?.context
+    if (!audioctx) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext
-      const ctx = new AudioCtx()
-      const node = ctx.createAnalyser()
-      node.fftSize = 1024 
-      node.connect(ctx.destination) 
-      setAudioAnalyser(node)
-      analyser = node
+      audioctx = new AudioCtx()
+      // We no longer need an analyser node — visemes come from HeadTTS directly
+      setAudioAnalyser({ context: audioctx })
     }
+    if (audioctx.state === 'suspended') await audioctx.resume()
 
-    if (analyser.context.state === 'suspended') {
-      await analyser.context.resume()
-    }
-    // ------------------------------------
-
-
-    // Smart sentence split
+    // Split into sentences for pipelining
     const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [text]
-    const sentences = rawSentences.filter((s) => s.trim().length > 1)
-    const finalSentences = sentences.length > 0 ? sentences : [text]
-    console.log(`[TTS] ${finalSentences.length} sentence(s)`)
+    const finalSentences = rawSentences.filter((s) => s.trim().length > 1)
+    const sentences = finalSentences.length > 0 ? finalSentences : [text]
+    console.log(`[TTS] ${sentences.length} sentence(s) via HeadTTS`)
 
-    const VOICE = 'v2_af_bella'   // Quality female pocket-tts voice (V2)
-
-    const fetchAudio = async (sentence) => {
+    // Fetch one sentence from HeadTTS REST API
+    // Returns { audioBuffer, visemes: [{viseme, time}], words: [{word, time}] } or null
+    const fetchSentence = async (sentence) => {
       const stripped = stripForTTS(sentence.trim())
       if (!stripped) return null
       try {
-        const fd = new FormData()
-        fd.append('text', stripped)
-        fd.append('voice_url', VOICE)
-        const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/tts`, { method: 'POST', body: fd })
-        if (res.ok) {
-          const buf = await res.arrayBuffer()
-          return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
-        }
-        console.error('[TTS] Server error:', res.status)
+        const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input: stripped,
+            voice: 'af_heart',       // Expressive female Kokoro voice
+            language: 'en-us',
+            speed: 1,
+            audioEncoding: 'wav',
+          }),
+        })
+        if (!res.ok) { console.error('[TTS] HeadTTS error:', res.status); return null }
+        const data = await res.json()
+        // data.audio is base64-encoded WAV
+        const binary = atob(data.audio)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const audioBuffer = await audioctx.decodeAudioData(bytes.buffer.slice(0))
+        // Build viseme schedule: [{viseme, time}]
+        const visemes = (data.visemes || []).map((v, i) => ({
+          viseme: v,
+          time: (data.vtimes?.[i] || 0) / 1000,  // ms → seconds
+          duration: (data.vdurations?.[i] || 100) / 1000,
+        }))
+        return { audioBuffer, visemes }
       } catch (e) {
-        console.error('[TTS] fetch error:', e)
+        console.error('[TTS] HeadTTS fetch error:', e)
+        return null
       }
-      return null
     }
 
-    // Prefetch-while-playing pipeline:
-    //   1. Start fetching sentence 0 immediately.
-    //   2. When sentence 0 is ready → start PLAYING it AND start fetching sentence 1.
-    //   3. Sentence 1 has the entire playback duration of sentence 0 to finish generating.
-    //   4. Repeat → zero gaps (as long as TTS generation ≤ playback time).
-    //
-    // This sends ONE request at a time to the (sequential) TTS server,
-    // which is far more efficient than parallel flooding.
-
-    let nextFetchPromise = finalSentences.length > 0 ? fetchAudio(finalSentences[0]) : null
+    // Prefetch-while-playing pipeline (same as before, zero gaps)
+    let nextFetchPromise = sentences.length > 0 ? fetchSentence(sentences[0]) : null
     let playedCount = 0
 
-    for (let i = 0; i < finalSentences.length; i++) {
-      const url = await nextFetchPromise   // wait for current sentence audio
+    for (let i = 0; i < sentences.length; i++) {
+      const result = await nextFetchPromise
 
-      // Immediately kick off the NEXT fetch so it runs while we play
-      nextFetchPromise = (i + 1 < finalSentences.length)
-        ? fetchAudio(finalSentences[i + 1])
+      // Start fetching next sentence while current one plays
+      nextFetchPromise = (i + 1 < sentences.length)
+        ? fetchSentence(sentences[i + 1])
         : null
 
-      if (!url) continue
+      if (!result) continue
+      const { audioBuffer, visemes } = result
 
-      console.log(`[TTS] ▶ sentence ${i + 1}/${finalSentences.length}`)
+      console.log(`[TTS] ▶ sentence ${i + 1}/${sentences.length}, visemes: ${visemes.length}`)
+
       await new Promise((resolve) => {
-        const audio = new Audio()
-        audio.crossOrigin = "anonymous" // Prevent CORS issues with Web Audio
-        audio.src = url
-        activeAudioRef.current = audio
+        const source = audioctx.createBufferSource()
+        source.buffer = audioBuffer
+        source.connect(audioctx.destination)
+        activeAudioRef.current = source
+
+        // Push viseme schedule to the 3D model  
+        setVisemeSchedule(visemes)
 
         let settled = false
         const done = () => {
           if (settled) return
           settled = true
-          URL.revokeObjectURL(url)
+          setVisemeSchedule(null)
           resolve()
         }
-        audio.onended = done
-        audio.onerror = (e) => { console.error('[TTS] playback error:', e); done() }
-        
-        // --- Connect to Analyser for vSync ---
-        if (analyser) {
-          try {
-            const ctx = analyser.context
-            const source = ctx.createMediaElementSource(audio)
-            
-            // Connect to analyser for vSync data
-            source.connect(analyser)
-            
-            // ALSO connect directly to destination to ensure we hear the audio
-            // (Connecting to MediaElementSource mutes the original <audio> element)
-            source.connect(ctx.destination)
-          } catch (e) {
-            console.warn('[vSync] Connection failed, audio might be muted:', e)
-          }
-        }
-
-
-        // ------------------------------------
-
-        audio.play()
-
-          .then(() => {
-            playedCount += 1
-          })
-          .catch((err) => {
-            console.error('[TTS] play() blocked:', err)
-            done()
-          })
+        source.onended = done
+        source.start(0)
+        playedCount++
       })
     }
 
-    // Browser autoplay policies can block Audio() in async flows.
-    // Fallback to built-in speech synthesis so mentor still speaks and animates.
+    // Fallback: Web Speech API if HeadTTS unavailable
     if (playedCount === 0 && typeof window !== 'undefined' && window.speechSynthesis) {
       await new Promise((resolve) => {
         const utterance = new SpeechSynthesisUtterance(stripForTTS(text))
         utterance.rate = 1
-        utterance.pitch = 1
+        utterance.pitch = 1.1
         utterance.onend = () => resolve()
         utterance.onerror = () => resolve()
         window.speechSynthesis.cancel()
@@ -270,6 +250,7 @@ function AIMentor() {
     }
 
     setIsSpeaking(false)
+    setVisemeSchedule(null)
     activeAudioRef.current = null
   }
 
@@ -541,7 +522,7 @@ function AIMentor() {
               <ambientLight intensity={0.7} />
               <spotLight position={[10, 10, 10]} angle={1.8} penumbra={1} />
               <React.Suspense fallback={null}>
-                <MentorModel isSpeaking={isSpeaking} analyser={audioAnalyser} position={[0, -4, 0]} scale={3} />
+                <MentorModel isSpeaking={isSpeaking} visemeSchedule={visemeSchedule} position={[0, -4, 0]} scale={3} />
                 <ContactShadows opacity={0.4} scale={5} blur={2} far={4.5} />
 
                 <Environment preset="city" />
