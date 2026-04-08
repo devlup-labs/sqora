@@ -15,24 +15,29 @@ import './aimentor.css'
 // Strip markdown, LaTeX, and symbols for clean text-to-speech
 function stripForTTS(text) {
   return text
-    .replace(/\$\$[\s\S]*?\$\$/g, ' math expression ')
-    .replace(/\$[^$]+?\$/g, ' math expression ')
+    .replace(/\$\$[\s\S]*?\$\$/g, ', math expression,')
+    .replace(/\$[^$]+?\$/g, ', math expression,')
     .replace(/\\[a-zA-Z]+\{[^}]*\}/g, '')
-    .replace(/```[\s\S]*?```/g, ' code block ')
+    .replace(/```[\s\S]*?```/g, ', code block,')
     .replace(/`[^`]+`/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/[*_]{1,3}/g, '')
     .replace(/^[-*_]{3,}$/gm, '')
-    .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/^\s*[-*+•]\s+/gm, ', ')   // handle - * + • bullets → pause
+    .replace(/•/g, ', ')                 // stray unicode bullets
+    .replace(/^\s*\d+\.\s+/gm, ', ')    // numbered lists
+    .replace(/:\s*\n/g, '. ')            // colon+newline → period
     .replace(/[~|>]/g, '')
     .replace(/\n{2,}/g, '. ')
     .replace(/\n/g, ' ')
+    .replace(/,\s*,/g, ',')
+    .replace(/\.\s*\./g, '.')
     .replace(/\s{2,}/g, ' ')
     .trim()
 }
+
 
 function AIMentor() {
   const [isSpeaking, setIsSpeaking] = useState(false)
@@ -65,8 +70,12 @@ function AIMentor() {
   const [videoToken, setVideoToken] = useState('')
   const [videoSrc, setVideoSrc] = useState('')
   const [audioAnalyser, setAudioAnalyser] = useState(null)
-  // HeadTTS viseme schedule: array of { viseme, time } objects
+  // HeadTTS viseme schedule
   const [visemeSchedule, setVisemeSchedule] = useState(null)
+  // HeadTTS WebSocket refs
+  const htWsRef = useRef(null)          // WebSocket instance
+  const htReadyRef = useRef(false)      // WS is connected + setup-confirmed
+  const htResolveRef = useRef(null)     // resolve pending speak() promise
 
   // Keep a fresh token for video/SSE URLs (refreshed whenever user changes)
   useEffect(() => {
@@ -136,104 +145,120 @@ function AIMentor() {
     }
   }, [videoReady])
 
-  // HeadTTS URL (env var VITE_TTS_URL points to the HeadTTS server exposed via Cloudflare)
-  const HEADTTS_URL = import.meta.env.VITE_TTS_URL || ''
+  // ── HeadTTS WebSocket ──────────────────────────────────────────────────────
+  const TTS_WS_URL = (import.meta.env.VITE_TTS_URL || '')
+    .replace(/^https/, 'wss').replace(/^http/, 'ws')
 
-  // ----- TTS: HeadTTS with Kokoro neural voice + viseme lip sync -----
+  useEffect(() => {
+    if (!TTS_WS_URL) return
+    let ws, dead = false
+    const connect = () => {
+      if (dead) return
+      ws = new WebSocket(TTS_WS_URL)
+      htWsRef.current = ws
+      htReadyRef.current = false
+      ws.onopen = () => ws.send(JSON.stringify({
+        type: 'setup', voice: 'af_heart', language: 'en-us', speed: 1, audioEncoding: 'wav',
+      }))
+      ws.onmessage = async (evt) => {
+        let msg; try { msg = JSON.parse(evt.data) } catch { return }
+        if (msg.type === 'setup') { htReadyRef.current = true; console.log('[HeadTTS WS] Ready'); return }
+        if (msg.type === 'audio' && htResolveRef.current) {
+          try {
+            const d = msg.data
+            const bin = atob(d.audio); const bytes = new Uint8Array(bin.length)
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+            const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+            const visemes = (d.visemes || []).map((v, i) => ({
+              viseme: v, time: (d.vtimes?.[i] || 0) / 1000, duration: (d.vdurations?.[i] || 100) / 1000,
+            }))
+            htResolveRef.current({ blobUrl, visemes })
+          } catch { htResolveRef.current(null) }
+          htResolveRef.current = null
+        }
+        if (msg.type === 'error') {
+          console.warn('[HeadTTS WS]', msg.data)
+          if (htResolveRef.current) { htResolveRef.current(null); htResolveRef.current = null }
+        }
+      }
+      ws.onclose = () => {
+        htReadyRef.current = false
+        if (htResolveRef.current) { htResolveRef.current(null); htResolveRef.current = null }
+        if (!dead) setTimeout(connect, 3000)
+      }
+      ws.onerror = () => ws.close()
+    }
+    connect()
+    return () => { dead = true; ws?.close() }
+  }, [TTS_WS_URL]) // eslint-disable-line
+
+  const htSynthesize = (text) => {
+    if (!htWsRef.current || !htReadyRef.current) return Promise.resolve(null)
+    return new Promise((resolve) => {
+      htResolveRef.current = resolve
+      htWsRef.current.send(JSON.stringify({ type: 'synthesize', input: text }))
+      setTimeout(() => {
+        if (htResolveRef.current === resolve) { resolve(null); htResolveRef.current = null }
+      }, 5000)
+    })
+  }
+
+  // ── speakTextPipelined ────────────────────────────────────────────────────
+  // Web Speech starts INSTANTLY as primary. HeadTTS parallel — takes over
+  // with Kokoro voice + real phoneme visemes if it responds in time.
   const speakTextPipelined = async (text) => {
     if (!voiceEnabled || !text.trim()) return
     setIsSpeaking(true)
-    console.log('[TTS] Starting speech for:', text.slice(0, 60))
-
     const cleanText = stripForTTS(text)
+    if (!cleanText.trim()) { setIsSpeaking(false); return }
+    console.log('[TTS]', cleanText.slice(0, 80))
 
-    // Split into sentences
-    const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [text]
-    const sentences = rawSentences.filter((s) => s.trim().length > 1)
-    const finalSentences = sentences.length > 0 ? sentences : [text]
+    const htPromise = htSynthesize(cleanText)
+    const synth = window.speechSynthesis
+    let wsFinished = false
 
-    // Try HeadTTS for first sentence to see if server is responsive
-    const tryHeadTTS = async (sentence) => {
-      const stripped = stripForTTS(sentence.trim())
-      if (!stripped) return null
-      try {
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 5000)
-        const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({ input: stripped, voice: 'af_heart', language: 'en-us', speed: 1, audioEncoding: 'wav' }),
-        })
-        clearTimeout(timer)
-        if (!res.ok) return null
-        const data = await res.json()
-        if (!data.audio) return null
-        // Build blob URL from base64 WAV
-        const binary = atob(data.audio)
-        const bytes = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-        const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
-        const visemes = (data.visemes || []).map((v, i) => ({
-          viseme: v,
-          time: (data.vtimes?.[i] || 0) / 1000,
-          duration: (data.vdurations?.[i] || 100) / 1000,
-        }))
-        return { blobUrl, visemes }
-      } catch (e) {
-        if (e.name === 'AbortError') console.warn('[TTS] HeadTTS timeout')
-        else console.warn('[TTS] HeadTTS error:', e.message)
-        return null
+    const wsDone = new Promise((resolve) => {
+      if (!synth) { resolve(); return }
+      synth.cancel()
+      const utt = new SpeechSynthesisUtterance(cleanText)
+      utt.rate = 1; utt.pitch = 1.1
+      const vs = synth.getVoices()
+      const fv = vs.find(v => /zira|samantha|victoria|female/i.test(v.name) && v.lang?.startsWith('en'))
+        || vs.find(v => v.lang?.startsWith('en'))
+      if (fv) utt.voice = fv
+      utt.onboundary = (e) => {
+        if (e.name !== 'word') return
+        const w = cleanText.slice(e.charIndex, e.charIndex + (e.charLength || 3))
+        setVisemeSchedule([{ viseme: /[aeiou]/i.test(w) ? 'aa' : 'nn', time: 0, duration: 0.12 }])
+        setTimeout(() => setVisemeSchedule(null), 130)
       }
-    }
-
-    // Play audio blob via <Audio> element (works even without user-gesture AudioContext)
-    const playBlobUrl = (blobUrl, visemes) => new Promise((resolve) => {
-      const audio = new Audio(blobUrl)
-      activeAudioRef.current = audio
-      setVisemeSchedule(visemes || null)
-      audio.onended = () => { URL.revokeObjectURL(blobUrl); setVisemeSchedule(null); resolve() }
-      audio.onerror = () => { URL.revokeObjectURL(blobUrl); setVisemeSchedule(null); resolve() }
-      audio.play().catch(() => { setVisemeSchedule(null); resolve() })
+      utt.onend = () => { wsFinished = true; setVisemeSchedule(null); resolve() }
+      utt.onerror = () => { wsFinished = true; setVisemeSchedule(null); resolve() }
+      synth.speak(utt)
     })
 
-    // Try HeadTTS pipeline first
-    let playedCount = 0
-    let nextFetch = tryHeadTTS(finalSentences[0])
+    const winner = await Promise.race([htPromise, wsDone.then(() => 'done')])
 
-    for (let i = 0; i < finalSentences.length; i++) {
-      const result = await nextFetch
-      nextFetch = (i + 1 < finalSentences.length) ? tryHeadTTS(finalSentences[i + 1]) : null
-      if (!result) continue
-      console.log(`[TTS] ▶ HeadTTS sentence ${i + 1}/${finalSentences.length}, visemes: ${result.visemes.length}`)
-      await playBlobUrl(result.blobUrl, result.visemes)
-      playedCount++
-    }
-
-    // Fallback: Web Speech API (always works in browser, no server needed)
-    if (playedCount === 0 && window.speechSynthesis) {
-      console.log('[TTS] Using Web Speech API fallback')
-      setIsSpeaking(true)
+    if (winner && winner !== 'done' && winner.blobUrl) {
+      synth?.cancel()
+      console.log('[TTS] HeadTTS Kokoro, visemes:', winner.visemes.length)
+      setVisemeSchedule(winner.visemes)
       await new Promise((resolve) => {
-        window.speechSynthesis.cancel()
-        const utterance = new SpeechSynthesisUtterance(cleanText)
-        utterance.rate = 1
-        utterance.pitch = 1.1
-        // Pick a female voice if available
-        const voices = window.speechSynthesis.getVoices()
-        const femaleVoice = voices.find(v => /female|woman|girl|zira|samantha|victoria/i.test(v.name))
-        if (femaleVoice) utterance.voice = femaleVoice
-        utterance.onend = resolve
-        utterance.onerror = resolve
-        window.speechSynthesis.speak(utterance)
+        const audio = new Audio(winner.blobUrl)
+        activeAudioRef.current = audio
+        audio.onended = () => { URL.revokeObjectURL(winner.blobUrl); setVisemeSchedule(null); resolve() }
+        audio.onerror = () => { URL.revokeObjectURL(winner.blobUrl); setVisemeSchedule(null); resolve() }
+        audio.play().catch(() => { setVisemeSchedule(null); resolve() })
       })
-      playedCount++
+    } else {
+      if (!wsFinished) await wsDone
     }
 
     setIsSpeaking(false)
     setVisemeSchedule(null)
     activeAudioRef.current = null
   }
+
 
   // ----- AI Response: show dots while thinking, reveal all at once -----
   const handleAIResponse = async (questionText) => {
@@ -386,10 +411,7 @@ function AIMentor() {
   }, [currentUser])
 
   const handleMicClick = () => {
-    // Resume audio context on user gesture
-    if (audioAnalyser && audioAnalyser.context.state === 'suspended') {
-      audioAnalyser.context.resume()
-    }
+    primeAudioContext()  // prime on gesture
 
     if (isSpeaking) {
 
@@ -414,11 +436,6 @@ function AIMentor() {
 
 
   const handleChatSend = async () => {
-    // Resume audio context on user gesture
-    if (audioAnalyser && audioAnalyser.context.state === 'suspended') {
-      audioAnalyser.context.resume()
-    }
-
     const val = chatInputRef.current?.value || ''
     const trimmed = val.trim()
     if (!trimmed) return
