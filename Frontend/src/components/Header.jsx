@@ -28,16 +28,9 @@ function Header() {
           </button>
         ) : (
           <>
-            {/* Primary Log In button with blue background */}
-            {/* Reference: Links to /login page when clicked */}
+            {/* Unified Sign In button */}
             <Link to="/login" className="btn btn-primary">
-              Log In
-            </Link>
-            
-            {/* Secondary Sign Up button with gray background */}
-            {/* Reference: Links to /signup page when clicked */}
-            <Link to="/signup" className="btn btn-secondary">
-              Sign Up
+              Sign In
             </Link>
           </>
         )}
