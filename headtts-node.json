@@ -1,0 +1,34 @@
+{
+  "server": {
+    "port": 8882,
+    "certFile": null,
+    "keyFile": null,
+    "websocket": true,
+    "rest": true,
+    "connectionTimeout": 20000,
+    "corsOrigin": "*"
+  },
+  "tts": {
+    "threads": 1,
+    "transformersModule": "@huggingface/transformers",
+    "model": "./model",
+    "dtype": "q8",
+    "device": "cpu",
+    "styleDim": 256,
+    "frameRate": 40,
+    "audioSampleRate": 24000,
+    "languages": ["en-us"],
+    "dictionaryPath": "./dictionaries",
+    "voicePath": "./voices",
+    "voices": ["af_bella", "af_heart"],
+    "deltaStart": -10,
+    "deltaEnd": 10,
+    "defaults": {
+      "voice": "af_heart",
+      "language": "en-us",
+      "speed": 1,
+      "audioEncoding": "wav"
+    }
+  },
+  "trace": 0
+}
