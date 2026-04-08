@@ -144,105 +144,85 @@ function AIMentor() {
   // cancellation flag — set true to abort speaking mid-way
   const stopSpeakRef = useRef(false)
 
-  // ── speakTextPipelined (REST + Per-Sentence Fallback) ────────────────────
+  // ── speakTextPipelined (Premium Priority, No Mid-Voice Switching) ───────
   const speakTextPipelined = async (text) => {
     if (!voiceEnabled || !text.trim()) return
     stopSpeakRef.current = false
     setIsSpeaking(true)
     
-    // Split into sentences for better responsiveness
-    const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [text]
-    const sentences = rawSentences.filter(s => s.trim().length > 1)
-    const finalSentences = sentences.length > 0 ? sentences : [text]
-    
-    console.log(`[TTS] Speaking ${finalSentences.length} sentences`)
+    const cleanText = stripForTTS(text)
+    if (!cleanText.trim()) { setIsSpeaking(false); return }
+
+    console.log('[TTS] Starting premium synthesis...')
 
     const HEADTTS_URL = import.meta.env.VITE_TTS_URL || ''
+    let useHeadTTS = false
 
-    for (let i = 0; i < finalSentences.length; i++) {
-      if (stopSpeakRef.current) break
-      const sentence = finalSentences[i]
-      const cleanSentence = stripForTTS(sentence)
-      if (!cleanSentence.trim()) continue
+    // 1. Initial Check: Try to synthesize the first chunk to verify server
+    // We wait up to 10s here because "it's okay if it takes a little"
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 10000)
+      
+      const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          input: cleanText, // Send whole text for consistency
+          voice: 'af_heart',
+          language: 'en-us',
+          speed: 1,
+          audioEncoding: 'wav'
+        })
+      })
+      clearTimeout(timer)
+      
+      if (res.ok) {
+        const data = await res.json()
+        if (data.audio) {
+          useHeadTTS = true
+          const bin = atob(data.audio); const bytes = new Uint8Array(bin.length)
+          for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j)
+          const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+          const visemes = (data.visemes || []).map((v, idx) => ({
+            viseme: v, time: (data.vtimes?.[idx] || 0) / 1000, duration: (data.vdurations?.[idx] || 100) / 1000,
+          }))
 
-      console.log(`[TTS] Sentence ${i+1}/${finalSentences.length}:`, cleanSentence.slice(0, 50))
-
-      let result = null
-
-      // Try HeadTTS REST API (strict 2s timeout)
-      if (HEADTTS_URL) {
-        try {
-          const controller = new AbortController()
-          const timer = setTimeout(() => controller.abort(), 2000)
-          
-          const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal,
-            body: JSON.stringify({
-              input: cleanSentence,
-              voice: 'af_heart',
-              language: 'en-us',
-              speed: 1,
-              audioEncoding: 'wav'
-            })
+          console.log('[TTS] ▶ Play HeadTTS (Neural + Accurate Visemes)')
+          await new Promise((resolve) => {
+            setVisemeSchedule(visemes)
+            const audio = new Audio(blobUrl)
+            activeAudioRef.current = audio
+            audio.onended = () => { URL.revokeObjectURL(blobUrl); setVisemeSchedule(null); resolve() }
+            audio.onerror = () => { URL.revokeObjectURL(blobUrl); setVisemeSchedule(null); resolve() }
+            audio.play().catch(resolve)
           })
-          clearTimeout(timer)
-          
-          if (res.ok) {
-            const data = await res.json()
-            if (data.audio) {
-              const bin = atob(data.audio); const bytes = new Uint8Array(bin.length)
-              for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j)
-              const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
-              const visemes = (data.visemes || []).map((v, idx) => ({
-                viseme: v, time: (data.vtimes?.[idx] || 0) / 1000, duration: (data.vdurations?.[idx] || 100) / 1000,
-              }))
-              result = { blobUrl, visemes }
-            }
-          }
-        } catch (e) {
-          console.warn('[TTS] HeadTTS error/timeout for sentence:', i + 1)
         }
       }
+    } catch (e) {
+      console.warn('[TTS] HeadTTS failed/timeout. Falling back to browser voice.')
+    }
 
-      if (stopSpeakRef.current) break
-
-      if (result) {
-        // --- Play HeadTTS Response ---
+    // 2. GLOBAL FALLBACK: Only if HeadTTS failed entirely
+    if (!useHeadTTS && !stopSpeakRef.current) {
+      const synth = window.speechSynthesis
+      if (synth) {
+        console.log('[TTS] ▶ Global Fallback (Web Speech)')
         await new Promise((resolve) => {
-          setVisemeSchedule(result.visemes)
-          const audio = new Audio(result.blobUrl)
-          activeAudioRef.current = audio
-          audio.onended = () => { URL.revokeObjectURL(result.blobUrl); setVisemeSchedule(null); resolve() }
-          audio.onerror = () => { URL.revokeObjectURL(result.blobUrl); setVisemeSchedule(null); resolve() }
-          audio.play().catch(resolve)
+          synth.cancel()
+          const utt = new SpeechSynthesisUtterance(cleanText)
+          utt.rate = 1; utt.pitch = 1.1
+          const vs = synth.getVoices()
+          const fv = vs.find(v => /female|zira|samantha|victoria/i.test(v.name) && v.lang?.startsWith('en'))
+          if (fv) utt.voice = fv
+          
+          // No "random" movement here as requested, just keep mouth closed or slight pulse if you want
+          // But user said "no fallback movement"
+          utt.onend = resolve
+          utt.onerror = resolve
+          synth.speak(utt)
         })
-      } else {
-        // --- Fallback to Web Speech API for THIS sentence ---
-        console.log('[TTS] Using Web Speech fallback for sentence:', i + 1)
-        const synth = window.speechSynthesis
-        if (synth) {
-          // Procedural lip sync for fallback
-          let lipInterval = setInterval(() => {
-            if (stopSpeakRef.current || !synth.speaking) { clearInterval(lipInterval); return }
-            const t = performance.now() / 1000
-            const vm = Math.sin(t * 12) > 0.3 ? 'aa' : 'sil'
-            setVisemeSchedule([{ viseme: vm, time: 0, duration: 0.1 }])
-            setTimeout(() => setVisemeSchedule(null), 80)
-          }, 100)
-
-          await new Promise((resolve) => {
-            const utt = new SpeechSynthesisUtterance(cleanSentence)
-            utt.rate = 1; utt.pitch = 1.1
-            const vs = synth.getVoices()
-            const fv = vs.find(v => /female|zira|samantha|victoria/i.test(v.name) && v.lang?.startsWith('en'))
-            if (fv) utt.voice = fv
-            utt.onend = () => { clearInterval(lipInterval); setVisemeSchedule(null); resolve() }
-            utt.onerror = () => { clearInterval(lipInterval); setVisemeSchedule(null); resolve() }
-            synth.speak(utt)
-          })
-        }
       }
     }
 
@@ -250,6 +230,8 @@ function AIMentor() {
     setVisemeSchedule(null)
     activeAudioRef.current = null
   }
+
+
 
 
 
