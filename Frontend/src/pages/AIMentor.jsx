@@ -200,7 +200,7 @@ function AIMentor() {
 
     console.log(`[TTS] Sequential HeadTTS for ${finalSentences.length} chunks`)
 
-    const HEADTTS_URL = import.meta.env.VITE_TTS_URL || ''
+    const HEADTTS_URL = import.meta.env.VITE_TTS_URL || (import.meta.env.DEV ? 'http://localhost:8882' : '')
     if (!HEADTTS_URL) {
       console.warn('[TTS] VITE_TTS_URL is not configured; skipping speech.')
       setIsSpeaking(false)
