@@ -87,8 +87,13 @@ V4. **Text is ONLY for labels and annotations, NOT the main content:**
 ═══════════════════════════════════════════
 
 1. Start with `from manim import *`
-2. Define exactly ONE class called `GeneratedScene(Scene):`
-3. Set background: `self.camera.background_color = "#0a1224"` in `construct()`
+2. **CRITICAL — MULTI-SCENE STRUCTURE**: Split your animation into 3-5 SEPARATE scene classes:
+   - Name them `GeneratedScene01(Scene):`, `GeneratedScene02(Scene):`, `GeneratedScene03(Scene):`, etc.
+   - Each class MUST be fully self-contained with its own `construct()` method.
+   - Each scene should be ~10-15 seconds of animation (3-5 animation steps each).
+   - ALL classes go in the SAME code output, one after another.
+   - Each class sets its own background: `self.camera.background_color = "#0a1224"`
+3. Set background: `self.camera.background_color = "#0a1224"` in EVERY class `construct()`
 4. Text rules:
    - Use `Text(...)` for labels (**never** use `Tex` for plain text)
    - **CRITICAL**: NEVER use `width=` kwarg in Text() — it does not exist.
@@ -101,32 +106,31 @@ V4. **Text is ONLY for labels and annotations, NOT the main content:**
    - For units like "kg", "m/s", put them in a separate `Text()` next to the equation.
    - Use ONLY: `^`, `_`, `\frac{{}}{{}}`, `\sqrt{{}}`, `\times`, `\cdot`, `\Delta`, `\sum`, `\int`, `\vec{{}}`, `\hat{{}}`
 6. Animations: `Write`, `FadeIn`, `FadeOut`, `Create`, `DrawBorderThenFill`, `Transform`, `ReplacementTransform`, `GrowFromCenter`, `GrowArrow`
-7. Add `self.wait(1)` to `self.wait(2)` between sections.
-8. Keep total animation under 60 seconds (~12-15 animation steps). Be concise.
-9. Colors: `BLUE_C`, `YELLOW_C`, `GREEN_C`, `RED_C`, `WHITE`, `GREY_A`, `ORANGE`, `PURPLE_C`, `TEAL_C`, `PINK`
-10. Position carefully — use `.to_edge()`, `.shift()`, `.next_to()` to avoid overlaps.
+7. Add `self.wait(1)` to `self.wait(2)` between steps within each scene class.
+8. Colors: `BLUE_C`, `YELLOW_C`, `GREEN_C`, `RED_C`, `WHITE`, `GREY_A`, `ORANGE`, `PURPLE_C`, `TEAL_C`, `PINK`
+9. Position carefully — use `.to_edge()`, `.shift()`, `.next_to()` to avoid overlaps.
     Keep 1 unit margin from all edges.
-11. Clear screen with `self.play(FadeOut(*self.mobjects))` between major sections.
-12. DO NOT use external files, images, SVGs, or custom fonts.
-13. DO NOT use `Tex()` — only `Text()` and `MathTex()`.
-14. Output ONLY valid Python code. No markdown fences, no explanations.
-15. CRITICAL STRING RULES:
+10. DO NOT use external files, images, SVGs, or custom fonts.
+11. DO NOT use `Tex()` — only `Text()` and `MathTex()`.
+12. Output ONLY valid Python code. No markdown fences, no explanations.
+13. CRITICAL STRING RULES:
     - NEVER include line breaks inside Text("...")
     - NEVER include unescaped apostrophes: use As instead of A's
     - Each Text() must be a SINGLE LINE string
-16. **CRITICAL**: Do NOT add ANY explanatory text or [instruction] tags after the code.
+14. **CRITICAL**: Do NOT add ANY explanatory text or [instruction] tags after the code.
 
 ═══════════════════════════════════════════
   EXAMPLE STRUCTURE (follow this pattern)
 ═══════════════════════════════════════════
 
-Section flow: Title → Visual diagram/graph with labels → Animate key insight → Clear → Next section
+For "Newtons Second Law", generate 3 scene classes:
 
-Example for "Newtons Second Law":
-  - Section 1: Title "Newtons Second Law" + Arrow showing force on a Rectangle (object)
+  GeneratedScene01: Title "Newtons Second Law" + Arrow showing force on a Rectangle (object)
     with labels "F", "m", "a" next to relevant parts
-  - Section 2: Axes showing F vs a graph (linear), plotting the line, adding label "F = ma"
-  - Section 3: Two scenarios side by side — small mass (small Rectangle) big acceleration
+
+  GeneratedScene02: Axes showing F vs a graph (linear), plotting the line, adding label "F = ma"
+
+  GeneratedScene03: Two scenarios side by side — small mass (small Rectangle) big acceleration
     vs big mass (big Rectangle) small acceleration, animated with `.animate.shift()`
 
 ## Topic: {topic}
@@ -134,7 +138,7 @@ Example for "Newtons Second Law":
 ## Content to animate:
 {response_text}
 
-REMEMBER: Output ONLY Python code. Make it VISUAL — shapes, graphs, diagrams, animations. NOT text slides.
+REMEMBER: Output ONLY Python code with 3-5 GeneratedSceneNN classes. Make it VISUAL. NOT text slides.
 """
 
 
@@ -252,6 +256,131 @@ def enforce_safe_layout(mobj):
     return mobj
 """
     return code + guard
+
+
+def _split_multi_scene_code(code):
+    """Split code containing multiple GeneratedSceneNN classes into individual files.
+    Returns list of (scene_num, code_str) sorted by scene number, or None if single scene."""
+    pattern = r'class GeneratedScene(\d+)\(Scene\):'
+    matches = list(re.finditer(pattern, code))
+
+    if len(matches) <= 1:
+        return None  # Single scene or no numbered scenes
+
+    # Everything before the first class = imports + helpers
+    preamble = code[:matches[0].start()].rstrip()
+
+    scenes = []
+    for i, match in enumerate(matches):
+        start = match.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(code)
+        class_code = code[start:end].rstrip()
+
+        # Rename GeneratedSceneNN -> GeneratedScene for manim rendering
+        class_code = re.sub(
+            r'class GeneratedScene\d+\(Scene\):',
+            'class GeneratedScene(Scene):',
+            class_code,
+            count=1
+        )
+
+        scene_num = int(match.group(1))
+        full_code = f"{preamble}\n\n{class_code}\n"
+        scenes.append((scene_num, full_code))
+
+    scenes.sort(key=lambda x: x[0])
+    return scenes
+
+
+def _render_one_scene(args):
+    """Render a single scene file. Used by _render_scenes_parallel."""
+    scene_num, scene_file, cwd = args
+    try:
+        subprocess.run(
+            [
+                "python3", "-m", "manim", "-ql",
+                "--fps", "10",
+                scene_file, "GeneratedScene",
+            ],
+            check=True,
+            cwd=cwd,
+            env={**os.environ, "PYTHONPATH": cwd},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        # Find output video
+        stem = os.path.splitext(os.path.basename(scene_file))[0]
+        video_path = os.path.join(MANIM_OUTPUT_DIR, stem, "480p10", "GeneratedScene.mp4")
+        if os.path.exists(video_path):
+            print(f"  ✓ Part {scene_num:02d} rendered")
+            return (scene_num, video_path)
+        # Fallback: search for it
+        for root, _dirs, files in os.walk(os.path.join(MANIM_OUTPUT_DIR, stem)):
+            for fname in files:
+                if fname == "GeneratedScene.mp4" and "partial" not in root:
+                    vpath = os.path.join(root, fname)
+                    print(f"  ✓ Part {scene_num:02d} rendered")
+                    return (scene_num, vpath)
+    except subprocess.CalledProcessError as e:
+        stderr_tail = e.stderr[-200:] if e.stderr else 'unknown'
+        print(f"  ✗ Part {scene_num:02d} render failed: {stderr_tail}")
+    except Exception as e:
+        print(f"  ✗ Part {scene_num:02d} error: {e}")
+    return None
+
+
+def _render_scenes_parallel(scene_files, cwd):
+    """Render multiple scene files in parallel.
+    scene_files: list of (scene_num, file_path) tuples.
+    Returns sorted list of (scene_num, video_path) for successful renders."""
+    max_workers = min(len(scene_files), os.cpu_count() or 4)
+    render_args = [(num, path, cwd) for num, path in scene_files]
+    results = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_render_one_scene, args): args[0]
+            for args in render_args
+        }
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                results.append(result)
+
+    results.sort(key=lambda x: x[0])
+    return results
+
+
+def _stitch_videos(video_paths, output_path):
+    """Concatenate multiple video files with ffmpeg."""
+    concat_list = output_path + ".concat.txt"
+    try:
+        with open(concat_list, "w") as f:
+            for vpath in video_paths:
+                f.write(f"file '{vpath}'\n")
+
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_list,
+                "-c", "copy",
+                output_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return True
+    except Exception as e:
+        print(f"FFmpeg stitching failed: {e}")
+        return False
+    finally:
+        if os.path.exists(concat_list):
+            os.remove(concat_list)
 
 def generate_manim_code(topic, response_text):
     """Call Gemini to generate manim code from the AI response.
@@ -499,7 +628,7 @@ def process_job(job_path):
         print(f"Generating manim code for: {topic}")
         codegen_start = time.time()
         manim_code = generate_manim_code(topic, response_text)
-        # Inject safety call inside construct()
+        # Inject safety background color into every construct()
         manim_code = manim_code.replace(  # type: ignore[union-attr]
             "def construct(self):",
             "def construct(self):\n        self.camera.background_color = '#0a1224'"
@@ -507,24 +636,55 @@ def process_job(job_path):
         codegen_time = time.time() - codegen_start
         print(f"⏱  Code generation: {codegen_time:.1f}s")
 
-        # Write the generated scene to a file
-        scene_file = os.path.join(SCENES_DIR, f"{lesson_id}.py")
-        with open(scene_file, "w") as f:
-            f.write(manim_code)
+        # --- Try multi-scene parallel rendering ---
+        scenes = _split_multi_scene_code(manim_code)
+        dest = os.path.join(RENDERED, f"{lesson_id}.mp4")
 
-        print(f"Running manim on generated scene...")
+        if scenes and len(scenes) > 1:
+            print(f"⚡ Split into {len(scenes)} scenes — rendering in parallel...")
 
-        # Run manim on the generated file (480p @ 10fps, single pass)
-        render_start = time.time()
-        result = subprocess.run(
+            # Write each scene to its own file
+            scene_files = []
+            for scene_num, scene_code in scenes:
+                scene_code = _inject_layout_guard(scene_code)
+                part_file = os.path.join(SCENES_DIR, f"{lesson_id}_part{scene_num:02d}.py")
+                with open(part_file, "w") as f:
+                    f.write(scene_code)
+                scene_files.append((scene_num, part_file))
+
+            render_start = time.time()
+            rendered = _render_scenes_parallel(scene_files, BASE)
+            render_time = time.time() - render_start
+
+            if rendered:
+                video_paths = [vp for _, vp in rendered]
+
+                if len(video_paths) == 1:
+                    shutil.copy2(video_paths[0], dest)
+                else:
+                    if not _stitch_videos(video_paths, dest):
+                        # Stitching failed — just use the first video
+                        shutil.copy2(video_paths[0], dest)
+
+                print(f"✓ Rendered {job_file} ({len(rendered)}/{len(scenes)} parts) → {dest}")
+                print(f"⏱  Parallel render: {render_time:.1f}s")
+            else:
+                raise RuntimeError("All parallel scene renders failed")
+
+        else:
+            # --- Fallback: single-scene rendering (original path) ---
+            print(f"Running manim on single generated scene...")
+
+            scene_file = os.path.join(SCENES_DIR, f"{lesson_id}.py")
+            with open(scene_file, "w") as f:
+                f.write(manim_code)
+
+            render_start = time.time()
+            result = subprocess.run(
                 [
-                    "python3",
-                    "-m",
-                    "manim",
-                    "-ql",
+                    "python3", "-m", "manim", "-ql",
                     "--fps", "10",
-                    scene_file,
-                    "GeneratedScene",
+                    scene_file, "GeneratedScene",
                 ],
                 check=True,
                 cwd=BASE,
@@ -533,45 +693,35 @@ def process_job(job_path):
                 text=True,
                 timeout=120,
             )
-        render_time = time.time() - render_start
-        print(f"⏱  Manim render: {render_time:.1f}s")
+            render_time = time.time() - render_start
+            print(f"⏱  Manim render: {render_time:.1f}s")
 
-        # Find the output video — manim outputs to media/videos/<filename>/1080p30/
-        scene_name = lesson_id
-        video_dir = os.path.join(
-            MANIM_OUTPUT_DIR, scene_name, "480p10"
-        )
-        video_file = os.path.join(video_dir, "GeneratedScene.mp4")
+            # Find output video
+            video_dir = os.path.join(MANIM_OUTPUT_DIR, lesson_id, "480p10")
+            video_file = os.path.join(video_dir, "GeneratedScene.mp4")
 
-        if os.path.exists(video_file):
-            dest = os.path.join(RENDERED, f"{lesson_id}.mp4")
-            shutil.copy2(video_file, dest)
-            print(f"✓ Rendered {job_file} → {dest}")
-        else:
-            # Try to find it by searching
-            print(f"Looking for video in {MANIM_OUTPUT_DIR}...")
-            found = False
-            for root, dirs, files in os.walk(MANIM_OUTPUT_DIR):
-                for fname in files:
-                    if fname == "GeneratedScene.mp4" and "partial" not in root:
-                        src = os.path.join(root, fname)
-                        dest = os.path.join(RENDERED, f"{lesson_id}.mp4")
-                        shutil.copy2(src, dest)
-                        print(f"✓ Rendered {job_file} → {dest}")
-                        found = True
+            if os.path.exists(video_file):
+                shutil.copy2(video_file, dest)
+                print(f"✓ Rendered {job_file} → {dest}")
+            else:
+                # Search for it
+                found = False
+                for root, _dirs, files in os.walk(MANIM_OUTPUT_DIR):
+                    for fname in files:
+                        if fname == "GeneratedScene.mp4" and "partial" not in root:
+                            shutil.copy2(os.path.join(root, fname), dest)
+                            print(f"✓ Rendered {job_file} → {dest}")
+                            found = True
+                            break
+                    if found:
                         break
-                if found:
-                    break
-
-            if not found:
-                print(f"WARNING: Could not find rendered video for {lesson_id}")
-                # pyre-ignore[16]
-                print(f"Manim stdout: {result.stdout[-500:]}")
+                if not found:
+                    print(f"WARNING: Could not find rendered video for {lesson_id}")
 
         if os.path.exists(job_path):
             shutil.move(job_path, os.path.join(DONE, job_file))
         total_time = time.time() - job_start
-        print(f"⏱  Job done in {total_time:.1f}s (codegen: {codegen_time:.1f}s, render: {render_time:.1f}s)")
+        print(f"⏱  Job total: {total_time:.1f}s (codegen: {codegen_time:.1f}s, render: {render_time:.1f}s)")
 
     except subprocess.CalledProcessError as e:
         print(f"Manim render failed for {job_file}:")
