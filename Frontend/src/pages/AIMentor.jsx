@@ -76,18 +76,6 @@ function normalizeVisemeSchedule(data) {
   return []
 }
 
-function toWebSocketUrl(url) {
-  if (!url || typeof url !== 'string') return ''
-  try {
-    const u = new URL(url)
-    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
-    return u.toString().replace(/\/$/, '')
-  } catch {
-    return ''
-  }
-}
-
-
 function AIMentor() {
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [isListening, setIsListening] = useState(false)
@@ -121,8 +109,7 @@ function AIMentor() {
   const [audioAnalyser, setAudioAnalyser] = useState(null)
   // HeadTTS viseme schedule
   const [visemeSchedule, setVisemeSchedule] = useState(null)
-  const activeFetchAbortRef = useRef(null)
-  const activeTtsSocketRef = useRef(null)
+  const activeFetchControllersRef = useRef(new Set())
 
   // Keep a fresh token for video/SSE URLs (refreshed whenever user changes)
   useEffect(() => {
@@ -195,7 +182,7 @@ function AIMentor() {
   // cancellation flag — set true to abort speaking mid-way
   const stopSpeakRef = useRef(false)
 
-  // ── speakTextPipelined (WebSocket Continuous + REST Fallback) ─────────────
+  // ── speakTextPipelined (Sentence Playback + REST Prefetch Pipeline) ───────
   const speakTextPipelined = async (text) => {
     if (!voiceEnabled || !text.trim()) return
     stopSpeakRef.current = false
@@ -205,6 +192,7 @@ function AIMentor() {
     const HEADTTS_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_TIMEOUT_MS || 45000)
     const HEADTTS_MAX_RETRIES = Number(import.meta.env.VITE_HEADTTS_MAX_RETRIES || 5)
     const HEADTTS_BACKOFF_MS = Number(import.meta.env.VITE_HEADTTS_BACKOFF_MS || 1200)
+    const HEADTTS_PREFETCH_AHEAD = Math.max(1, Number(import.meta.env.VITE_HEADTTS_PREFETCH_AHEAD || 2))
     
     const rawSentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text]
     const sentences = rawSentences
@@ -212,7 +200,7 @@ function AIMentor() {
       .filter((s) => s.trim().length > 1)
     const finalSentences = sentences.length > 0 ? sentences : [stripForTTS(text)]
 
-    console.log(`[TTS] Continuous HeadTTS for ${finalSentences.length} chunks`)
+    console.log(`[TTS] HeadTTS pipelined playback for ${finalSentences.length} chunks`)
 
     const HEADTTS_URL = import.meta.env.VITE_TTS_URL || (import.meta.env.DEV ? 'http://localhost:8882' : '')
     if (!HEADTTS_URL) {
@@ -242,132 +230,6 @@ function AIMentor() {
       })
     }
 
-    const speakViaWebSocket = async (chunks) => {
-      const wsUrl = toWebSocketUrl(HEADTTS_URL)
-      if (!wsUrl) return false
-
-      const messageQueue = []
-      const resultsByRef = new Map()
-      const failedRefs = new Set()
-      let socketClosed = false
-
-      const ws = await new Promise((resolve, reject) => {
-        let settled = false
-        try {
-          const socket = new WebSocket(wsUrl)
-          socket.binaryType = 'arraybuffer'
-          const openTimer = setTimeout(() => {
-            if (settled) return
-            settled = true
-            try { socket.close() } catch {}
-            reject(new Error('HeadTTS websocket connect timeout'))
-          }, 12000)
-
-          socket.onopen = () => {
-            if (settled) return
-            settled = true
-            clearTimeout(openTimer)
-            resolve(socket)
-          }
-          socket.onerror = (e) => {
-            if (settled) return
-            settled = true
-            clearTimeout(openTimer)
-            reject(e)
-          }
-        } catch (e) {
-          reject(e)
-        }
-      }).catch((e) => {
-        console.warn('[TTS] WebSocket connect failed, fallback to REST', e)
-        return null
-      })
-
-      if (!ws || stopSpeakRef.current) return false
-
-      activeTtsSocketRef.current = ws
-
-      ws.onclose = () => { socketClosed = true }
-      ws.onerror = () => { socketClosed = true }
-
-      ws.onmessage = (event) => {
-        if (typeof event.data === 'string') {
-          try {
-            const msg = JSON.parse(event.data)
-            if (msg?.type === 'audio' && Number.isFinite(msg?.ref)) {
-              messageQueue.push(msg)
-            } else if (msg?.type === 'error' && Number.isFinite(msg?.ref)) {
-              failedRefs.add(msg.ref)
-            }
-          } catch {}
-          return
-        }
-
-        const meta = messageQueue.shift()
-        if (!meta || !Number.isFinite(meta?.ref)) return
-
-        const audioBlob = event.data instanceof Blob
-          ? event.data
-          : new Blob([event.data], { type: 'audio/wav' })
-        const blobUrl = URL.createObjectURL(audioBlob)
-        const visemes = normalizeVisemeSchedule(meta.data || {})
-        resultsByRef.set(meta.ref, { blobUrl, visemes })
-      }
-
-      try {
-        ws.send(JSON.stringify({
-          type: 'setup',
-          data: { voice: 'af_heart', language: 'en-us', speed: 1, audioEncoding: 'wav' }
-        }))
-
-        chunks.forEach((chunk, idx) => {
-          if (!chunk.trim()) return
-          ws.send(JSON.stringify({
-            type: 'synthesize',
-            id: idx + 1,
-            data: { input: chunk }
-          }))
-        })
-
-        for (let idx = 0; idx < chunks.length; idx++) {
-          if (stopSpeakRef.current) break
-          const ref = idx + 1
-          const waitStart = Date.now()
-
-          while (!stopSpeakRef.current && !resultsByRef.has(ref) && !failedRefs.has(ref)) {
-            if (Date.now() - waitStart > HEADTTS_TIMEOUT_MS * 2) {
-              failedRefs.add(ref)
-              break
-            }
-            if (socketClosed && !resultsByRef.has(ref)) {
-              failedRefs.add(ref)
-              break
-            }
-            await wait(40)
-          }
-
-          if (failedRefs.has(ref)) {
-            if (idx === 0) return false
-            continue
-          }
-
-          const result = resultsByRef.get(ref)
-          resultsByRef.delete(ref)
-          await playAudioChunk(result)
-        }
-
-        return true
-      } catch (e) {
-        console.warn('[TTS] WebSocket synth failed, fallback to REST', e)
-        return false
-      } finally {
-        try { ws.close() } catch {}
-        if (activeTtsSocketRef.current === ws) {
-          activeTtsSocketRef.current = null
-        }
-      }
-    }
-
     const synthesizeChunkWithRetry = async (chunkText, chunkIndex) => {
       let lastError = null
 
@@ -375,7 +237,7 @@ function AIMentor() {
         if (stopSpeakRef.current) return null
 
         const controller = new AbortController()
-        activeFetchAbortRef.current = controller
+        activeFetchControllersRef.current.add(controller)
         const timeoutMs = HEADTTS_TIMEOUT_MS + (attempt - 1) * 3000
         const timer = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -415,9 +277,7 @@ function AIMentor() {
           }
         } finally {
           clearTimeout(timer)
-          if (activeFetchAbortRef.current === controller) {
-            activeFetchAbortRef.current = null
-          }
+          activeFetchControllersRef.current.delete(controller)
         }
       }
 
@@ -426,36 +286,59 @@ function AIMentor() {
     }
 
     try {
-      const wsWorked = await speakViaWebSocket(finalSentences)
+      const inFlight = new Map()
+      const queueSynthesis = (idx) => {
+        if (idx < 0 || idx >= finalSentences.length) return
+        if (inFlight.has(idx)) return
 
-      if (!wsWorked && !stopSpeakRef.current) {
-        for (let i = 0; i < finalSentences.length; i++) {
-          if (stopSpeakRef.current) break
-          const cleanSentence = finalSentences[i]
-          if (!cleanSentence.trim()) continue
-
-          const result = await synthesizeChunkWithRetry(cleanSentence, i)
-          if (stopSpeakRef.current) break
-
-          if (!result) {
-            if (i === 0) {
-              console.error('[TTS] Unable to synthesize first chunk with HeadTTS. Skipping voice instead of browser fallback.')
-              break
-            }
-            console.warn('[TTS] Skipping broken chunk and continuing with next sentence...')
-            continue
-          }
-
-          await playAudioChunk(result)
+        const sentence = finalSentences[idx]
+        if (!sentence.trim()) {
+          inFlight.set(idx, Promise.resolve(null))
+          return
         }
+
+        const pending = synthesizeChunkWithRetry(sentence, idx).finally(() => {
+          inFlight.delete(idx)
+        })
+        inFlight.set(idx, pending)
+      }
+
+      for (let i = 0; i < Math.min(finalSentences.length, HEADTTS_PREFETCH_AHEAD + 1); i++) {
+        queueSynthesis(i)
+      }
+
+      for (let i = 0; i < finalSentences.length; i++) {
+        if (stopSpeakRef.current) break
+
+        queueSynthesis(i)
+        for (let j = 1; j <= HEADTTS_PREFETCH_AHEAD; j++) {
+          queueSynthesis(i + j)
+        }
+
+        const pending = inFlight.get(i)
+        const result = pending ? await pending : await synthesizeChunkWithRetry(finalSentences[i], i)
+
+        if (stopSpeakRef.current) break
+
+        if (!result) {
+          if (i === 0) {
+            console.error('[TTS] Unable to synthesize first chunk with HeadTTS. Skipping voice instead of browser fallback.')
+            break
+          }
+          console.warn(`[TTS] Chunk ${i + 1} failed, continuing to next chunk.`)
+          continue
+        }
+
+        await playAudioChunk(result)
       }
     } finally {
-      try { activeTtsSocketRef.current?.close() } catch {}
       setIsSpeaking(false)
       setVisemeSchedule(null)
       activeAudioRef.current = null
-      activeFetchAbortRef.current = null
-      activeTtsSocketRef.current = null
+      activeFetchControllersRef.current.forEach((controller) => {
+        try { controller.abort() } catch {}
+      })
+      activeFetchControllersRef.current.clear()
     }
   }
 
@@ -508,7 +391,7 @@ function AIMentor() {
         }
       }
 
-      // Start pipelined TTS (all sentences in parallel, play in order)
+      // Start pipelined TTS (sentence-by-sentence playback, prefetch upcoming chunks)
       speakTextPipelined(reply)
     } catch (err) {
       console.error('Chat error:', err)
@@ -617,8 +500,10 @@ function AIMentor() {
     if (isSpeaking) {
       // Stop all audio immediately
       stopSpeakRef.current = true
-      try { activeFetchAbortRef.current?.abort() } catch {}
-      try { activeTtsSocketRef.current?.close() } catch {}
+      activeFetchControllersRef.current.forEach((controller) => {
+        try { controller.abort() } catch {}
+      })
+      activeFetchControllersRef.current.clear()
       if (activeAudioRef.current) {
         try { activeAudioRef.current.pause() } catch {}
         activeAudioRef.current = null
