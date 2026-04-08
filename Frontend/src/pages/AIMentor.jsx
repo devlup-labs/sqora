@@ -203,15 +203,31 @@ function AIMentor() {
     })
   }
 
+  // cancellation flag — set true to abort speaking mid-way
+  const stopSpeakRef = useRef(false)
+
   // ── speakTextPipelined ────────────────────────────────────────────────────
   // Web Speech starts INSTANTLY as primary. HeadTTS parallel — takes over
   // with Kokoro voice + real phoneme visemes if it responds in time.
   const speakTextPipelined = async (text) => {
     if (!voiceEnabled || !text.trim()) return
+    stopSpeakRef.current = false
     setIsSpeaking(true)
     const cleanText = stripForTTS(text)
     if (!cleanText.trim()) { setIsSpeaking(false); return }
     console.log('[TTS]', cleanText.slice(0, 80))
+
+    // Procedural lip sync — interval pulses mouth while speaking
+    // Works on ALL browsers, no onboundary needed
+    let lipInterval = setInterval(() => {
+      if (stopSpeakRef.current) { clearInterval(lipInterval); return }
+      const t = performance.now() / 1000
+      const vm = Math.sin(t * 8) > 0.2 ? 'aa' : 'sil'
+      setVisemeSchedule([{ viseme: vm, time: 0, duration: 0.1 }])
+      setTimeout(() => setVisemeSchedule(null), 100)
+    }, 120)
+
+    const stopLip = () => { clearInterval(lipInterval); setVisemeSchedule(null) }
 
     const htPromise = htSynthesize(cleanText)
     const synth = window.speechSynthesis
@@ -226,21 +242,19 @@ function AIMentor() {
       const fv = vs.find(v => /zira|samantha|victoria|female/i.test(v.name) && v.lang?.startsWith('en'))
         || vs.find(v => v.lang?.startsWith('en'))
       if (fv) utt.voice = fv
-      utt.onboundary = (e) => {
-        if (e.name !== 'word') return
-        const w = cleanText.slice(e.charIndex, e.charIndex + (e.charLength || 3))
-        setVisemeSchedule([{ viseme: /[aeiou]/i.test(w) ? 'aa' : 'nn', time: 0, duration: 0.12 }])
-        setTimeout(() => setVisemeSchedule(null), 130)
-      }
-      utt.onend = () => { wsFinished = true; setVisemeSchedule(null); resolve() }
-      utt.onerror = () => { wsFinished = true; setVisemeSchedule(null); resolve() }
+      utt.onend = () => { wsFinished = true; resolve() }
+      utt.onerror = () => { wsFinished = true; resolve() }
       synth.speak(utt)
     })
 
     const winner = await Promise.race([htPromise, wsDone.then(() => 'done')])
 
+    if (stopSpeakRef.current) { stopLip(); setIsSpeaking(false); return }
+
     if (winner && winner !== 'done' && winner.blobUrl) {
+      // HeadTTS Kokoro won — cancel Web Speech, play with real visemes
       synth?.cancel()
+      stopLip()
       console.log('[TTS] HeadTTS Kokoro, visemes:', winner.visemes.length)
       setVisemeSchedule(winner.visemes)
       await new Promise((resolve) => {
@@ -252,12 +266,14 @@ function AIMentor() {
       })
     } else {
       if (!wsFinished) await wsDone
+      stopLip()
     }
 
     setIsSpeaking(false)
     setVisemeSchedule(null)
     activeAudioRef.current = null
   }
+
 
 
   // ----- AI Response: show dots while thinking, reveal all at once -----
@@ -411,19 +427,17 @@ function AIMentor() {
   }, [currentUser])
 
   const handleMicClick = () => {
-    primeAudioContext()  // prime on gesture
-
     if (isSpeaking) {
-
-      // Stop current audio immediately
+      // Stop all audio immediately
+      stopSpeakRef.current = true
       if (activeAudioRef.current) {
-        activeAudioRef.current.pause()
+        try { activeAudioRef.current.pause() } catch {}
         activeAudioRef.current = null
       }
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel()
-      }
+      window.speechSynthesis?.cancel()
+      if (htResolveRef.current) { htResolveRef.current(null); htResolveRef.current = null }
       setIsSpeaking(false)
+      setVisemeSchedule(null)
       return
     }
 
