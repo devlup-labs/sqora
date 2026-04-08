@@ -27,6 +27,7 @@ out/
 *.swp
 *.swo
 .DS_Store
+<<<<<<< HEAD
 
 # Environment Files
 .env
@@ -76,3 +77,18 @@ CLAUDE.md
 
 .agents/firebase-service-account.json
 .vercel
+=======
+# Logs
+*.log
+
+# Backup files
+*.bak*
+*.bak-*
+
+# Models / binaries
+model/
+voices/
+
+# Node stuff (if needed)
+node_modules/
+>>>>>>> 509d5b7 (Update gitignore for logs, models, binaries)
