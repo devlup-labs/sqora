@@ -160,39 +160,41 @@ function AIMentor() {
     const sentences = finalSentences.length > 0 ? finalSentences : [text]
     console.log(`[TTS] ${sentences.length} sentence(s) via HeadTTS`)
 
-    // Fetch one sentence from HeadTTS REST API
-    // Returns { audioBuffer, visemes: [{viseme, time}], words: [{word, time}] } or null
+    // Fetch one sentence from HeadTTS REST API (3s timeout → fallback to Web Speech)
     const fetchSentence = async (sentence) => {
       const stripped = stripForTTS(sentence.trim())
       if (!stripped) return null
       try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 3000)
         const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             input: stripped,
-            voice: 'af_heart',       // Expressive female Kokoro voice
+            voice: 'af_heart',
             language: 'en-us',
             speed: 1,
             audioEncoding: 'wav',
           }),
         })
+        clearTimeout(timer)
         if (!res.ok) { console.error('[TTS] HeadTTS error:', res.status); return null }
         const data = await res.json()
-        // data.audio is base64-encoded WAV
         const binary = atob(data.audio)
         const bytes = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
         const audioBuffer = await audioctx.decodeAudioData(bytes.buffer.slice(0))
-        // Build viseme schedule: [{viseme, time}]
         const visemes = (data.visemes || []).map((v, i) => ({
           viseme: v,
-          time: (data.vtimes?.[i] || 0) / 1000,  // ms → seconds
+          time: (data.vtimes?.[i] || 0) / 1000,
           duration: (data.vdurations?.[i] || 100) / 1000,
         }))
         return { audioBuffer, visemes }
       } catch (e) {
-        console.error('[TTS] HeadTTS fetch error:', e)
+        if (e.name === 'AbortError') console.warn('[TTS] HeadTTS timeout, using fallback')
+        else console.error('[TTS] HeadTTS fetch error:', e)
         return null
       }
     }
