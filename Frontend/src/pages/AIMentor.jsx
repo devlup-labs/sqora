@@ -76,6 +76,17 @@ function normalizeVisemeSchedule(data) {
   return []
 }
 
+function toWebSocketUrl(url) {
+  if (!url || typeof url !== 'string') return ''
+  try {
+    const u = new URL(url)
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+    return u.toString().replace(/\/$/, '')
+  } catch {
+    return ''
+  }
+}
+
 
 function AIMentor() {
   const [isSpeaking, setIsSpeaking] = useState(false)
@@ -111,6 +122,7 @@ function AIMentor() {
   // HeadTTS viseme schedule
   const [visemeSchedule, setVisemeSchedule] = useState(null)
   const activeFetchAbortRef = useRef(null)
+  const activeTtsSocketRef = useRef(null)
 
   // Keep a fresh token for video/SSE URLs (refreshed whenever user changes)
   useEffect(() => {
@@ -183,7 +195,7 @@ function AIMentor() {
   // cancellation flag — set true to abort speaking mid-way
   const stopSpeakRef = useRef(false)
 
-  // ── speakTextPipelined (Sequential HeadTTS Chunking) ──────────────────────
+  // ── speakTextPipelined (WebSocket Continuous + REST Fallback) ─────────────
   const speakTextPipelined = async (text) => {
     if (!voiceEnabled || !text.trim()) return
     stopSpeakRef.current = false
@@ -195,10 +207,12 @@ function AIMentor() {
     const HEADTTS_BACKOFF_MS = Number(import.meta.env.VITE_HEADTTS_BACKOFF_MS || 1200)
     
     const rawSentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text]
-    const sentences = rawSentences.filter(s => s.trim().length > 1)
-    const finalSentences = sentences.length > 0 ? sentences : [text]
+    const sentences = rawSentences
+      .map((s) => stripForTTS(s))
+      .filter((s) => s.trim().length > 1)
+    const finalSentences = sentences.length > 0 ? sentences : [stripForTTS(text)]
 
-    console.log(`[TTS] Sequential HeadTTS for ${finalSentences.length} chunks`)
+    console.log(`[TTS] Continuous HeadTTS for ${finalSentences.length} chunks`)
 
     const HEADTTS_URL = import.meta.env.VITE_TTS_URL || (import.meta.env.DEV ? 'http://localhost:8882' : '')
     if (!HEADTTS_URL) {
@@ -206,6 +220,152 @@ function AIMentor() {
       setIsSpeaking(false)
       setVisemeSchedule(null)
       return
+    }
+
+    const playAudioChunk = async (result) => {
+      if (!result || !result.blobUrl) return
+      await new Promise((resolve) => {
+        setVisemeSchedule(result.visemes)
+        const audio = new Audio(result.blobUrl)
+        activeAudioRef.current = audio
+        audio.onended = () => {
+          URL.revokeObjectURL(result.blobUrl)
+          setVisemeSchedule(null)
+          resolve()
+        }
+        audio.onerror = () => {
+          URL.revokeObjectURL(result.blobUrl)
+          setVisemeSchedule(null)
+          resolve()
+        }
+        audio.play().catch(resolve)
+      })
+    }
+
+    const speakViaWebSocket = async (chunks) => {
+      const wsUrl = toWebSocketUrl(HEADTTS_URL)
+      if (!wsUrl) return false
+
+      const messageQueue = []
+      const resultsByRef = new Map()
+      const failedRefs = new Set()
+      let socketClosed = false
+
+      const ws = await new Promise((resolve, reject) => {
+        let settled = false
+        try {
+          const socket = new WebSocket(wsUrl)
+          socket.binaryType = 'arraybuffer'
+          const openTimer = setTimeout(() => {
+            if (settled) return
+            settled = true
+            try { socket.close() } catch {}
+            reject(new Error('HeadTTS websocket connect timeout'))
+          }, 12000)
+
+          socket.onopen = () => {
+            if (settled) return
+            settled = true
+            clearTimeout(openTimer)
+            resolve(socket)
+          }
+          socket.onerror = (e) => {
+            if (settled) return
+            settled = true
+            clearTimeout(openTimer)
+            reject(e)
+          }
+        } catch (e) {
+          reject(e)
+        }
+      }).catch((e) => {
+        console.warn('[TTS] WebSocket connect failed, fallback to REST', e)
+        return null
+      })
+
+      if (!ws || stopSpeakRef.current) return false
+
+      activeTtsSocketRef.current = ws
+
+      ws.onclose = () => { socketClosed = true }
+      ws.onerror = () => { socketClosed = true }
+
+      ws.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          try {
+            const msg = JSON.parse(event.data)
+            if (msg?.type === 'audio' && Number.isFinite(msg?.ref)) {
+              messageQueue.push(msg)
+            } else if (msg?.type === 'error' && Number.isFinite(msg?.ref)) {
+              failedRefs.add(msg.ref)
+            }
+          } catch {}
+          return
+        }
+
+        const meta = messageQueue.shift()
+        if (!meta || !Number.isFinite(meta?.ref)) return
+
+        const audioBlob = event.data instanceof Blob
+          ? event.data
+          : new Blob([event.data], { type: 'audio/wav' })
+        const blobUrl = URL.createObjectURL(audioBlob)
+        const visemes = normalizeVisemeSchedule(meta.data || {})
+        resultsByRef.set(meta.ref, { blobUrl, visemes })
+      }
+
+      try {
+        ws.send(JSON.stringify({
+          type: 'setup',
+          data: { voice: 'af_heart', language: 'en-us', speed: 1, audioEncoding: 'wav' }
+        }))
+
+        chunks.forEach((chunk, idx) => {
+          if (!chunk.trim()) return
+          ws.send(JSON.stringify({
+            type: 'synthesize',
+            id: idx + 1,
+            data: { input: chunk }
+          }))
+        })
+
+        for (let idx = 0; idx < chunks.length; idx++) {
+          if (stopSpeakRef.current) break
+          const ref = idx + 1
+          const waitStart = Date.now()
+
+          while (!stopSpeakRef.current && !resultsByRef.has(ref) && !failedRefs.has(ref)) {
+            if (Date.now() - waitStart > HEADTTS_TIMEOUT_MS * 2) {
+              failedRefs.add(ref)
+              break
+            }
+            if (socketClosed && !resultsByRef.has(ref)) {
+              failedRefs.add(ref)
+              break
+            }
+            await wait(40)
+          }
+
+          if (failedRefs.has(ref)) {
+            if (idx === 0) return false
+            continue
+          }
+
+          const result = resultsByRef.get(ref)
+          resultsByRef.delete(ref)
+          await playAudioChunk(result)
+        }
+
+        return true
+      } catch (e) {
+        console.warn('[TTS] WebSocket synth failed, fallback to REST', e)
+        return false
+      } finally {
+        try { ws.close() } catch {}
+        if (activeTtsSocketRef.current === ws) {
+          activeTtsSocketRef.current = null
+        }
+      }
     }
 
     const synthesizeChunkWithRetry = async (chunkText, chunkIndex) => {
@@ -266,46 +426,36 @@ function AIMentor() {
     }
 
     try {
-      for (let i = 0; i < finalSentences.length; i++) {
-        if (stopSpeakRef.current) break
-        const sentence = finalSentences[i]
-        const cleanSentence = stripForTTS(sentence)
-        if (!cleanSentence.trim()) continue
+      const wsWorked = await speakViaWebSocket(finalSentences)
 
-        const result = await synthesizeChunkWithRetry(cleanSentence, i)
-        if (stopSpeakRef.current) break
+      if (!wsWorked && !stopSpeakRef.current) {
+        for (let i = 0; i < finalSentences.length; i++) {
+          if (stopSpeakRef.current) break
+          const cleanSentence = finalSentences[i]
+          if (!cleanSentence.trim()) continue
 
-        if (!result) {
-          if (i === 0) {
-            console.error('[TTS] Unable to synthesize first chunk with HeadTTS. Skipping voice instead of browser fallback.')
-            break
+          const result = await synthesizeChunkWithRetry(cleanSentence, i)
+          if (stopSpeakRef.current) break
+
+          if (!result) {
+            if (i === 0) {
+              console.error('[TTS] Unable to synthesize first chunk with HeadTTS. Skipping voice instead of browser fallback.')
+              break
+            }
+            console.warn('[TTS] Skipping broken chunk and continuing with next sentence...')
+            continue
           }
-          console.warn('[TTS] Skipping broken chunk and continuing with next sentence...')
-          continue
+
+          await playAudioChunk(result)
         }
-
-        await new Promise((resolve) => {
-          setVisemeSchedule(result.visemes)
-          const audio = new Audio(result.blobUrl)
-          activeAudioRef.current = audio
-          audio.onended = () => {
-            URL.revokeObjectURL(result.blobUrl)
-            setVisemeSchedule(null)
-            resolve()
-          }
-          audio.onerror = () => {
-            URL.revokeObjectURL(result.blobUrl)
-            setVisemeSchedule(null)
-            resolve()
-          }
-          audio.play().catch(resolve)
-        })
       }
     } finally {
+      try { activeTtsSocketRef.current?.close() } catch {}
       setIsSpeaking(false)
       setVisemeSchedule(null)
       activeAudioRef.current = null
       activeFetchAbortRef.current = null
+      activeTtsSocketRef.current = null
     }
   }
 
@@ -468,6 +618,7 @@ function AIMentor() {
       // Stop all audio immediately
       stopSpeakRef.current = true
       try { activeFetchAbortRef.current?.abort() } catch {}
+      try { activeTtsSocketRef.current?.close() } catch {}
       if (activeAudioRef.current) {
         try { activeAudioRef.current.pause() } catch {}
         activeAudioRef.current = null
