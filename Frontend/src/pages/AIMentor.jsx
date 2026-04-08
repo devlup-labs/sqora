@@ -144,81 +144,98 @@ function AIMentor() {
   // cancellation flag — set true to abort speaking mid-way
   const stopSpeakRef = useRef(false)
 
-  // ── speakTextPipelined (Premium Priority, No Mid-Voice Switching) ───────
+  // ── speakTextPipelined (Sequential HeadTTS Chunking) ──────────────────────
   const speakTextPipelined = async (text) => {
     if (!voiceEnabled || !text.trim()) return
     stopSpeakRef.current = false
     setIsSpeaking(true)
     
-    const cleanText = stripForTTS(text)
-    if (!cleanText.trim()) { setIsSpeaking(false); return }
+    const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [text]
+    const sentences = rawSentences.filter(s => s.trim().length > 1)
+    const finalSentences = sentences.length > 0 ? sentences : [text]
 
-    console.log('[TTS] Starting premium synthesis...')
+    console.log(`[TTS] Sequential HeadTTS for ${finalSentences.length} chunks`)
 
     const HEADTTS_URL = import.meta.env.VITE_TTS_URL || ''
-    let useHeadTTS = false
+    let ttsWorks = true
 
-    // 1. Initial Check: Try to synthesize the first chunk to verify server
-    // We wait up to 10s here because "it's okay if it takes a little"
-    try {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 10000)
-      
-      const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          input: cleanText, // Send whole text for consistency
-          voice: 'af_heart',
-          language: 'en-us',
-          speed: 1,
-          audioEncoding: 'wav'
-        })
-      })
-      clearTimeout(timer)
-      
-      if (res.ok) {
-        const data = await res.json()
-        if (data.audio) {
-          useHeadTTS = true
-          const bin = atob(data.audio); const bytes = new Uint8Array(bin.length)
-          for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j)
-          const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
-          const visemes = (data.visemes || []).map((v, idx) => ({
-            viseme: v, time: (data.vtimes?.[idx] || 0) / 1000, duration: (data.vdurations?.[idx] || 100) / 1000,
-          }))
+    for (let i = 0; i < finalSentences.length; i++) {
+      if (stopSpeakRef.current) break
+      const sentence = finalSentences[i]
+      const cleanSentence = stripForTTS(sentence)
+      if (!cleanSentence.trim()) continue
 
-          console.log('[TTS] ▶ Play HeadTTS (Neural + Accurate Visemes)')
-          await new Promise((resolve) => {
-            setVisemeSchedule(visemes)
-            const audio = new Audio(blobUrl)
-            activeAudioRef.current = audio
-            audio.onended = () => { URL.revokeObjectURL(blobUrl); setVisemeSchedule(null); resolve() }
-            audio.onerror = () => { URL.revokeObjectURL(blobUrl); setVisemeSchedule(null); resolve() }
-            audio.play().catch(resolve)
+      let result = null
+      
+      // Try synthesis for this chunk
+      try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 8000)
+        const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            input: cleanSentence,
+            voice: 'af_heart',
+            language: 'en-us',
+            speed: 1,
+            audioEncoding: 'wav'
           })
+        })
+        clearTimeout(timer)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.audio) {
+            const bin = atob(data.audio); const bytes = new Uint8Array(bin.length)
+            for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j)
+            const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+            const visemes = (data.visemes || []).map((v, idx) => ({
+              viseme: v, time: (data.vtimes?.[idx] || 0) / 1000, duration: (data.vdurations?.[idx] || 100) / 1000,
+            }))
+            result = { blobUrl, visemes }
+          }
         }
+      } catch (e) {
+        console.warn(`[TTS] HeadTTS chunk ${i+1} failed`, e)
       }
-    } catch (e) {
-      console.warn('[TTS] HeadTTS failed/timeout. Falling back to browser voice.')
+
+      if (stopSpeakRef.current) break
+
+      if (result) {
+        // SUCCESS: Play HeadTTS Chunk
+        await new Promise((resolve) => {
+          setVisemeSchedule(result.visemes)
+          const audio = new Audio(result.blobUrl)
+          activeAudioRef.current = audio
+          audio.onended = () => { URL.revokeObjectURL(result.blobUrl); setVisemeSchedule(null); resolve() }
+          audio.onerror = () => { URL.revokeObjectURL(result.blobUrl); setVisemeSchedule(null); resolve() }
+          audio.play().catch(resolve)
+        })
+      } else {
+        // FAIL: No fallback mid-response as requested. 
+        // If it's the very first chunk, we can global-fallback to Web Speech
+        if (i === 0) {
+          ttsWorks = false
+          break
+        }
+        // Otherwise, just skip this broken sentence and continue with next HeadTTS chunk
+        console.warn('[TTS] Skipping broken chunk...')
+      }
     }
 
-    // 2. GLOBAL FALLBACK: Only if HeadTTS failed entirely
-    if (!useHeadTTS && !stopSpeakRef.current) {
+    // GLOBAL FALLBACK (Only if HeadTTS failed starting the very first sentence)
+    if (!ttsWorks && !stopSpeakRef.current) {
       const synth = window.speechSynthesis
       if (synth) {
-        console.log('[TTS] ▶ Global Fallback (Web Speech)')
+        const fullClean = stripForTTS(text)
         await new Promise((resolve) => {
           synth.cancel()
-          const utt = new SpeechSynthesisUtterance(cleanText)
+          const utt = new SpeechSynthesisUtterance(fullClean)
           utt.rate = 1; utt.pitch = 1.1
           const vs = synth.getVoices()
           const fv = vs.find(v => /female|zira|samantha|victoria/i.test(v.name) && v.lang?.startsWith('en'))
           if (fv) utt.voice = fv
-          
-          // No "random" movement here as requested, just keep mouth closed or slight pulse if you want
-          // But user said "no fallback movement"
           utt.onend = resolve
           utt.onerror = resolve
           synth.speak(utt)
