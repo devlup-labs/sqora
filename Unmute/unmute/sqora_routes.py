@@ -502,7 +502,7 @@ async def api_exam(code: str):
 async def proxy_tts(request: Request, text: str = Form(None), voice: str = Form("af_bella")):
     _UNMUTE_DIR = Path(__file__).parents[1]
     config = _load_json(str(_UNMUTE_DIR / "config.json"), {})
-    tts_url: str = config.get("tts", {}).get("url", "http://localhost:8089/tts")
+    tts_url: str = config.get("tts", {}).get("url", "http://127.0.0.1:8882/v1/synthesize")
     logger.info(f"[Proxy TTS] voice={voice} text={str(text)[:50]}... -> {tts_url}")
 
     if not text:

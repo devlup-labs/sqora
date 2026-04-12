@@ -256,7 +256,7 @@ function AIMentor() {
     const normalizedDirectTts = HEADTTS_URL ? `${HEADTTS_URL.replace(/\/$/, '')}/v1/synthesize` : ''
     const normalizedApiBase = (API_BASE || '').replace(/\/$/, '')
     const proxyTts = `${normalizedApiBase}/api/tts`
-    const ttsEndpoints = [...new Set([normalizedDirectTts, proxyTts].filter(Boolean))]
+    const ttsEndpoints = [...new Set([proxyTts, normalizedDirectTts].filter(Boolean))]
 
     if (ttsEndpoints.length === 0) {
       console.warn('[TTS] No TTS endpoints configured; skipping speech.')
@@ -265,23 +265,50 @@ function AIMentor() {
       return
     }
 
-    const playAudioChunk = async (result) => {
+    const playAudioChunk = async (result, fallbackText = '') => {
       if (!result || !result.blobUrl) return
+
+      const playWithSpeechSynthesis = async (textChunk) => {
+        if (!textChunk || typeof window === 'undefined' || !window.speechSynthesis) return
+        await new Promise((resolve) => {
+          try {
+            window.speechSynthesis.cancel()
+            const utterance = new SpeechSynthesisUtterance(textChunk)
+            utterance.rate = 1
+            utterance.onend = () => resolve()
+            utterance.onerror = () => resolve()
+            window.speechSynthesis.speak(utterance)
+          } catch {
+            resolve()
+          }
+        })
+      }
+
       await new Promise((resolve) => {
+        let finished = false
+        const finish = () => {
+          if (finished) return
+          finished = true
+          try { URL.revokeObjectURL(result.blobUrl) } catch {}
+          setVisemeSchedule(null)
+          resolve()
+        }
+
         setVisemeSchedule(result.visemes)
         const audio = new Audio(result.blobUrl)
         activeAudioRef.current = audio
-        audio.onended = () => {
-          URL.revokeObjectURL(result.blobUrl)
-          setVisemeSchedule(null)
-          resolve()
-        }
-        audio.onerror = () => {
-          URL.revokeObjectURL(result.blobUrl)
-          setVisemeSchedule(null)
-          resolve()
-        }
-        audio.play().catch(resolve)
+        audio.onended = finish
+        audio.onerror = finish
+        audio.play().catch(async (err) => {
+          console.warn('[TTS] audio.play() blocked/failed; using browser speech fallback.', err)
+          try {
+            audio.onended = null
+            audio.onerror = null
+            audio.pause()
+          } catch {}
+          await playWithSpeechSynthesis(fallbackText)
+          finish()
+        })
       })
     }
 
@@ -437,7 +464,7 @@ function AIMentor() {
 
         consecutiveFailures = 0
 
-        await playAudioChunk(result)
+        await playAudioChunk(result, finalSentences[i])
       }
     } finally {
       setIsSpeaking(false)
