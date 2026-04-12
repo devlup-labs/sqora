@@ -189,7 +189,8 @@ function AIMentor() {
     setIsSpeaking(true)
 
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const HEADTTS_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_TIMEOUT_MS || 16000)
+    const HEADTTS_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_TIMEOUT_MS || 22000)
+    const HEADTTS_FIRST_CHUNK_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_FIRST_CHUNK_TIMEOUT_MS || 32000)
     const HEADTTS_MAX_RETRIES = Number(import.meta.env.VITE_HEADTTS_MAX_RETRIES || 3)
     const HEADTTS_BACKOFF_MS = Number(import.meta.env.VITE_HEADTTS_BACKOFF_MS || 200)
     const HEADTTS_PREFETCH_AHEAD = Math.max(1, Number(import.meta.env.VITE_HEADTTS_PREFETCH_AHEAD || 6))
@@ -387,9 +388,12 @@ function AIMentor() {
         activeFetchControllersRef.current.add(controller)
         const adaptiveBaseTimeout = Math.max(
           HEADTTS_TIMEOUT_MS,
-          Math.min(30000, HEADTTS_TIMEOUT_MS + Math.floor(chunkText.length * 55))
+          Math.min(45000, HEADTTS_TIMEOUT_MS + Math.floor(chunkText.length * 55))
         )
-        const timeoutMs = adaptiveBaseTimeout + (attempt - 1) * 2500
+        const chunkBaseTimeout = chunkIndex === 0
+          ? Math.max(adaptiveBaseTimeout, HEADTTS_FIRST_CHUNK_TIMEOUT_MS)
+          : adaptiveBaseTimeout
+        const timeoutMs = chunkBaseTimeout + (attempt - 1) * 2500
         const timer = setTimeout(() => controller.abort(), timeoutMs)
 
         try {
