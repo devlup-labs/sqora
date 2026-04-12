@@ -265,6 +265,71 @@ function AIMentor() {
       return
     }
 
+    const buildSyntheticVisemeSchedule = (fallbackText) => {
+      const words = String(fallbackText || '').split(/\s+/).filter(Boolean)
+      const visemeCycle = ['aa', 'E', 'I', 'O', 'U', 'RR', 'DD']
+      const schedule = []
+      let cursor = 0
+
+      words.forEach((word, idx) => {
+        const segments = Math.max(1, Math.min(3, Math.ceil(word.length / 5)))
+        for (let i = 0; i < segments; i++) {
+          schedule.push({
+            viseme: visemeCycle[(idx + i) % visemeCycle.length],
+            time: cursor,
+            duration: 0.11,
+          })
+          cursor += 0.11
+        }
+        cursor += 0.04
+      })
+
+      schedule.push({ viseme: 'sil', time: cursor, duration: 0.12 })
+      return schedule
+    }
+
+    const playEmergencySpeechFallback = async (fallbackText) => {
+      const safeText = String(fallbackText || '').trim()
+      if (!safeText) return
+
+      const schedule = buildSyntheticVisemeSchedule(safeText)
+      const totalSeconds = schedule.length > 0
+        ? schedule[schedule.length - 1].time + schedule[schedule.length - 1].duration
+        : Math.max(1.5, Math.min(8, safeText.length * 0.05))
+
+      setVisemeSchedule(schedule)
+
+      await new Promise((resolve) => {
+        let finished = false
+        let guardTimer = null
+
+        const finish = () => {
+          if (finished) return
+          finished = true
+          if (guardTimer) clearTimeout(guardTimer)
+          setVisemeSchedule(null)
+          resolve()
+        }
+
+        guardTimer = setTimeout(finish, Math.round((totalSeconds + 0.6) * 1000))
+
+        if (typeof window === 'undefined' || !window.speechSynthesis) {
+          return
+        }
+
+        try {
+          window.speechSynthesis.cancel()
+          const utterance = new SpeechSynthesisUtterance(safeText)
+          utterance.rate = 1
+          utterance.onend = finish
+          utterance.onerror = finish
+          window.speechSynthesis.speak(utterance)
+        } catch {
+          // Guard timer will resolve this fallback path.
+        }
+      })
+    }
+
     const playAudioChunk = async (result, fallbackText = '') => {
       if (!result || !result.blobUrl) return
 
@@ -451,7 +516,8 @@ function AIMentor() {
         if (!result) {
           consecutiveFailures += 1
           if (i === 0) {
-            console.error('[TTS] Unable to synthesize first chunk with HeadTTS. Skipping voice instead of browser fallback.')
+            console.error('[TTS] Unable to synthesize first chunk with HeadTTS. Forcing emergency speech fallback.')
+            await playEmergencySpeechFallback(finalSentences.join(' '))
             break
           }
           if (consecutiveFailures >= 2) {
