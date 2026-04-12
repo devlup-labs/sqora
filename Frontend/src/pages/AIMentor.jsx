@@ -189,10 +189,12 @@ function AIMentor() {
     setIsSpeaking(true)
 
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const HEADTTS_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_TIMEOUT_MS || 45000)
-    const HEADTTS_MAX_RETRIES = Number(import.meta.env.VITE_HEADTTS_MAX_RETRIES || 5)
-    const HEADTTS_BACKOFF_MS = Number(import.meta.env.VITE_HEADTTS_BACKOFF_MS || 1200)
-    const HEADTTS_PREFETCH_AHEAD = Math.max(1, Number(import.meta.env.VITE_HEADTTS_PREFETCH_AHEAD || 2))
+    const HEADTTS_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_TIMEOUT_MS || 12000)
+    const HEADTTS_MAX_RETRIES = Number(import.meta.env.VITE_HEADTTS_MAX_RETRIES || 2)
+    const HEADTTS_BACKOFF_MS = Number(import.meta.env.VITE_HEADTTS_BACKOFF_MS || 200)
+    const HEADTTS_PREFETCH_AHEAD = Math.max(1, Number(import.meta.env.VITE_HEADTTS_PREFETCH_AHEAD || 6))
+    const HEADTTS_INITIAL_BUFFER = Math.max(1, Number(import.meta.env.VITE_HEADTTS_INITIAL_BUFFER || 2))
+    const HEADTTS_INITIAL_BUFFER_WAIT_MS = Number(import.meta.env.VITE_HEADTTS_INITIAL_BUFFER_WAIT_MS || 9000)
 
     const rawSentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text]
     const sentences = rawSentences
@@ -315,6 +317,20 @@ function AIMentor() {
         queueSynthesis(i)
       }
 
+      // Build a small initial audio buffer so playback transitions do not stall after sentence 1.
+      const initialTarget = Math.min(finalSentences.length, HEADTTS_INITIAL_BUFFER)
+      const initialDeadline = Date.now() + HEADTTS_INITIAL_BUFFER_WAIT_MS
+      while (
+        !stopSpeakRef.current &&
+        readyResults.size < initialTarget &&
+        inFlight.size > 0 &&
+        Date.now() < initialDeadline
+      ) {
+        await wait(35)
+      }
+
+      let consecutiveFailures = 0
+
       for (let i = 0; i < finalSentences.length; i++) {
         if (stopSpeakRef.current) break
 
@@ -335,13 +351,20 @@ function AIMentor() {
         if (stopSpeakRef.current) break
 
         if (!result) {
+          consecutiveFailures += 1
           if (i === 0) {
             console.error('[TTS] Unable to synthesize first chunk with HeadTTS. Skipping voice instead of browser fallback.')
+            break
+          }
+          if (consecutiveFailures >= 2) {
+            console.warn('[TTS] Multiple consecutive chunk failures; ending speech early to avoid long pause loops.')
             break
           }
           console.warn(`[TTS] Chunk ${i + 1} failed, continuing to next chunk.`)
           continue
         }
+
+        consecutiveFailures = 0
 
         await playAudioChunk(result)
       }
