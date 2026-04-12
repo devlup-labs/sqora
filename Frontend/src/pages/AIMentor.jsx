@@ -249,10 +249,13 @@ function AIMentor() {
       return null
     }
 
+    const inFlight = new Map()
+    const readyResults = new Map()
+
     try {
-      const inFlight = new Map()
       const queueSynthesis = (idx) => {
         if (idx < 0 || idx >= finalSentences.length) return
+        if (readyResults.has(idx)) return
         if (inFlight.has(idx)) return
 
         const sentence = finalSentences[idx]
@@ -261,9 +264,14 @@ function AIMentor() {
           return
         }
 
-        const pending = synthesizeChunkWithRetry(sentence, idx).finally(() => {
-          inFlight.delete(idx)
-        })
+        const pending = synthesizeChunkWithRetry(sentence, idx)
+          .then((result) => {
+            readyResults.set(idx, result)
+            return result
+          })
+          .finally(() => {
+            inFlight.delete(idx)
+          })
         inFlight.set(idx, pending)
       }
 
@@ -279,8 +287,14 @@ function AIMentor() {
           queueSynthesis(i + j)
         }
 
-        const pending = inFlight.get(i)
-        const result = pending ? await pending : await synthesizeChunkWithRetry(finalSentences[i], i)
+        let result = null
+        if (readyResults.has(i)) {
+          result = readyResults.get(i)
+        } else {
+          const pending = inFlight.get(i)
+          result = pending ? await pending : await synthesizeChunkWithRetry(finalSentences[i], i)
+        }
+        readyResults.delete(i)
 
         if (stopSpeakRef.current) break
 
@@ -299,6 +313,12 @@ function AIMentor() {
       setIsSpeaking(false)
       setVisemeSchedule(null)
       activeAudioRef.current = null
+      readyResults.forEach((result) => {
+        if (result?.blobUrl) {
+          try { URL.revokeObjectURL(result.blobUrl) } catch {}
+        }
+      })
+      readyResults.clear()
       activeFetchControllersRef.current.forEach((controller) => {
         try { controller.abort() } catch { }
       })
