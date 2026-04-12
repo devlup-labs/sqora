@@ -210,38 +210,74 @@ function AIMentor() {
       return
     }
 
-    if (analyser.context.state === 'suspended') {
-      await analyser.context.resume()
-    }
-    // ------------------------------------
-
-
-    // Smart sentence split
-    const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [text]
-    const sentences = rawSentences.filter((s) => s.trim().length > 1)
-    const finalSentences = sentences.length > 0 ? sentences : [text]
-    console.log(`[TTS] ${finalSentences.length} sentence(s)`)
-
-    const VOICE = 'v2_af_bella'   // Quality female pocket-tts voice (V2)
-
-    const fetchAudio = async (sentence) => {
-      const stripped = stripForTTS(sentence.trim())
-      if (!stripped) return null
-      try {
-        const fd = new FormData()
-        fd.append('text', stripped)
-        fd.append('voice', VOICE)
-        // Prefer backend proxy to avoid browser CORS issues with direct :8089 calls.
-        let res = await fetch('/api/tts', { method: 'POST', body: fd })
-        if (!res.ok) {
-          const fallbackFd = new FormData()
-          fallbackFd.append('text', stripped)
-          fallbackFd.append('voice_url', VOICE)
-          res = await fetch('http://localhost:8089/tts', { method: 'POST', body: fallbackFd })
+    const playAudioChunk = async (result) => {
+      if (!result || !result.blobUrl) return
+      await new Promise((resolve) => {
+        setVisemeSchedule(result.visemes)
+        const audio = new Audio(result.blobUrl)
+        activeAudioRef.current = audio
+        audio.onended = () => {
+          URL.revokeObjectURL(result.blobUrl)
+          setVisemeSchedule(null)
+          resolve()
         }
-        if (res.ok) {
-          const buf = await res.arrayBuffer()
-          return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
+        audio.onerror = () => {
+          URL.revokeObjectURL(result.blobUrl)
+          setVisemeSchedule(null)
+          resolve()
+        }
+        audio.play().catch(resolve)
+      })
+    }
+
+    const synthesizeChunkWithRetry = async (chunkText, chunkIndex) => {
+      let lastError = null
+
+      for (let attempt = 1; attempt <= HEADTTS_MAX_RETRIES; attempt++) {
+        if (stopSpeakRef.current) return null
+
+        const controller = new AbortController()
+        activeFetchControllersRef.current.add(controller)
+        const timeoutMs = HEADTTS_TIMEOUT_MS + (attempt - 1) * 3000
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+        try {
+          const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              input: chunkText,
+              voice: 'af_heart',
+              language: 'en-us',
+              speed: 1,
+              audioEncoding: 'wav'
+            })
+          })
+
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`)
+          }
+
+          const data = await res.json()
+          const blobUrl = decodeBase64ToBlobUrl(data?.audio, 'audio/wav')
+          if (!blobUrl) {
+            throw new Error('No audio payload in HeadTTS response')
+          }
+
+          const visemes = normalizeVisemeSchedule(data)
+          return { blobUrl, visemes }
+        } catch (e) {
+          lastError = e
+          if (stopSpeakRef.current) return null
+          if (attempt < HEADTTS_MAX_RETRIES) {
+            const backoff = HEADTTS_BACKOFF_MS * attempt
+            console.warn(`[TTS] Chunk ${chunkIndex + 1} attempt ${attempt} failed; retrying in ${backoff}ms`, e)
+            await wait(backoff)
+          }
+        } finally {
+          clearTimeout(timer)
+          activeFetchControllersRef.current.delete(controller)
         }
       }
 
