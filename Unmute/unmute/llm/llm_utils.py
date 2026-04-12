@@ -14,7 +14,7 @@ class LLMService:
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.api_key = os.getenv("GEMINI_API_KEY")
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = "gemini-3.1-flash-lite-preview"
         self.client = None
 
         self.load_config()

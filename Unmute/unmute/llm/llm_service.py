@@ -17,7 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class LLMService:
-    _DEFAULT_MODEL = "gemini-2.5-flash"
+    _DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+    _FALLBACK_THINKING_MESSAGE = "Sorry, I am having trouble thinking right now. Please try again."
+    _QUOTA_EXHAUSTED_MESSAGE = "AI service is temporarily unavailable due to quota limits. Please try again in a few minutes."
+    _TIMEOUT_MESSAGE = "AI is taking too long to respond right now. Please try again."
+    _NO_RESPONSE_MESSAGE = "I could not generate a response just now. Please try again."
 
     def __init__(self, config_path: str):
         self.config_path = config_path
@@ -408,10 +412,42 @@ class LLMService:
             res_text = str(getattr(response, "text", ""))
             if res_text:
                 return res_text
-            return "No response generated."
+            logger.warning("LLM returned empty text payload")
+            return self._NO_RESPONSE_MESSAGE
         except Exception as e:
             logger.error(f"LLM Error: {e}")
-            return "Sorry, I am having trouble thinking right now. Please try again."
+            return self._classify_exception_message(e)
+
+    def _classify_exception_message(self, error: Exception) -> str:
+        msg = str(error).lower()
+        if (
+            "resource_exhausted" in msg
+            or "monthly spending cap" in msg
+            or "billing account" in msg
+            or "quota" in msg
+            or "429" in msg
+        ):
+            return self._QUOTA_EXHAUSTED_MESSAGE
+        if "timeout" in msg or "timed out" in msg or "deadline" in msg:
+            return self._TIMEOUT_MESSAGE
+        return self._FALLBACK_THINKING_MESSAGE
+
+    def is_degraded_response(self, reply: str) -> bool:
+        text = (reply or "").strip().lower()
+        if not text:
+            return True
+
+        degraded_prefixes = (
+            "ai is not configured",
+            self._FALLBACK_THINKING_MESSAGE.lower(),
+            self._QUOTA_EXHAUSTED_MESSAGE.lower(),
+            self._TIMEOUT_MESSAGE.lower(),
+            self._NO_RESPONSE_MESSAGE.lower(),
+            "sorry, ai is taking too long",
+            "ai error occurred",
+            "could not reach the server",
+        )
+        return text.startswith(degraded_prefixes)
 
     def stream_response(self, message: str, chat_history: list):
         if not self.client:
@@ -432,7 +468,7 @@ class LLMService:
                     yield chunk.text
         except Exception as e:
             logger.error(f"LLM Stream Error: {e}")
-            yield "Sorry, I ran into a problem. Please try again."
+            yield self._classify_exception_message(e)
 
 
 # Singleton instance

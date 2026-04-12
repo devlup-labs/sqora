@@ -115,6 +115,12 @@ def _extract_topic(text: str) -> str:
     return "JEE/NEET Lesson"
 
 
+def _is_cacheable_reply(reply: str) -> bool:
+    if not reply or not reply.strip():
+        return False
+    return not llm_service.is_degraded_response(reply)
+
+
 def _create_animation_job(response_text: str, user_id: str, topic: str = "Lesson") -> str:
     cache = get_video_cache(user_id)
     key = _normalize_prompt(response_text)
@@ -254,9 +260,14 @@ async def api_chat(body: ChatRequest, uid: str = Depends(get_current_uid)):
     # 1. Cache hit – send all at once
     if key in ai_response_cache:
         reply = ai_response_cache[key]
-        logger.info(f"AI cache hit: {str(body.message)[:50]}")
-        lesson_id = _create_animation_job(reply, user_id, _extract_topic(body.message))
-        return {"reply": reply, "video_id": lesson_id}
+        if _is_cacheable_reply(reply):
+            logger.info(f"AI cache hit: {str(body.message)[:50]}")
+            lesson_id = _create_animation_job(reply, user_id, _extract_topic(body.message))
+            return {"reply": reply, "video_id": lesson_id}
+
+        logger.warning("Dropping degraded AI cache entry for prompt: %s", str(body.message)[:80])
+        ai_response_cache.pop(key, None)
+        save_ai_cache(user_id, ai_response_cache)
 
     try:
         # 2. Call LLM with timeout
@@ -272,12 +283,15 @@ async def api_chat(body: ChatRequest, uid: str = Depends(get_current_uid)):
         reply = f"AI error occurred: {str(e)}"
 
     # 3. Save to cache if valid
-    if reply and "AI error" not in reply:
+    if _is_cacheable_reply(reply):
         ai_response_cache[key] = reply
         save_ai_cache(user_id, ai_response_cache)
     
     # 4. Create animation job
-    lesson_id = _create_animation_job(reply, user_id, _extract_topic(body.message))
+    lesson_id = None
+    if _is_cacheable_reply(reply):
+        lesson_id = _create_animation_job(reply, user_id, _extract_topic(body.message))
+
     return {"reply": reply, "video_id": lesson_id}
 
 
@@ -310,12 +324,18 @@ async def api_chat_stream(message: str, request: Request, uid: str = Depends(get
     # Cache hit – send all at once but still as SSE
     if key in ai_response_cache:
         cached = ai_response_cache[key]
-        lesson_id = _create_animation_job(cached, user_id, _extract_topic(message))
+        if not _is_cacheable_reply(cached):
+            logger.warning("Dropping degraded AI cache entry for stream prompt: %s", str(message)[:80])
+            ai_response_cache.pop(key, None)
+            save_ai_cache(user_id, ai_response_cache)
+        else:
+            lesson_id = _create_animation_job(cached, user_id, _extract_topic(message))
 
-        async def _cached_gen():
-            yield f"data: {json.dumps({'token': cached})}\n\n"
-            yield f"data: [DONE] {json.dumps({'video_id': lesson_id, 'reply': cached})}\n\n"
-        return StreamingResponse(_cached_gen(), media_type="text/event-stream")
+            async def _cached_gen():
+                yield f"data: {json.dumps({'token': cached})}\n\n"
+                yield f"data: [DONE] {json.dumps({'video_id': lesson_id, 'reply': cached})}\n\n"
+
+            return StreamingResponse(_cached_gen(), media_type="text/event-stream")
 
     # Streaming from Gemini
     async def _stream_gen():
@@ -345,10 +365,13 @@ async def api_chat_stream(message: str, request: Request, uid: str = Depends(get
             yield f"data: {json.dumps({'token': token})}\n\n"
 
         reply = "".join(full_reply)
-        ai_response_cache[key] = reply
-        save_ai_cache(user_id, ai_response_cache)
+        if _is_cacheable_reply(reply):
+            ai_response_cache[key] = reply
+            save_ai_cache(user_id, ai_response_cache)
 
-        lesson_id = _create_animation_job(reply, user_id, _extract_topic(message))
+        lesson_id = None
+        if _is_cacheable_reply(reply):
+            lesson_id = _create_animation_job(reply, user_id, _extract_topic(message))
 
         yield f"data: [DONE] {json.dumps({'video_id': lesson_id, 'reply': reply})}\n\n"
 
@@ -476,23 +499,41 @@ async def api_exam(code: str):
 # ---------------------------------------------------------------------------
 
 @router.post("/api/tts")
-async def proxy_tts(text: str = Form(...), voice: str = Form("af_bella")):
+async def proxy_tts(request: Request, text: str = Form(None), voice: str = Form("af_bella")):
     _UNMUTE_DIR = Path(__file__).parents[1]
     config = _load_json(str(_UNMUTE_DIR / "config.json"), {})
     tts_url: str = config.get("tts", {}).get("url", "http://localhost:8089/tts")
     logger.info(f"[Proxy TTS] voice={voice} text={str(text)[:50]}... -> {tts_url}")
 
+    if not text:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        text = str(body.get("input") or body.get("text") or "").strip()
+        voice = str(body.get("voice") or voice or "af_bella")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Missing text")
+
     def fetch_tts():
-        # Pocket-TTS HTTP API expects `voice` (not `voice_url`) for named voices.
-        return requests.post(tts_url, data={"text": text, "voice": voice}, stream=True)
+        payload = {
+            "input": text,
+            "voice": voice,
+            "language": "en-us",
+            "speed": 1,
+            "audioEncoding": "wav",
+        }
+        return requests.post(tts_url, json=payload, timeout=30)
 
     try:
         response = await asyncio.to_thread(fetch_tts)
         if response.status_code == 200:
-            return StreamingResponse(
-                response.iter_content(chunk_size=8192),
-                media_type="audio/wav"
-            )
+            content_type = response.headers.get("content-type", "")
+            if "application/json" in content_type:
+                return JSONResponse(response.json())
+
+            return StreamingResponse(response.iter_content(chunk_size=8192), media_type=content_type or "audio/wav")
         else:
             logger.error(f"[Proxy TTS] Error Body: {str(response.text)}")
             raise HTTPException(status_code=response.status_code, detail="Configured TTS Server Error")

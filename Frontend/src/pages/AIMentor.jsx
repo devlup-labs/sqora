@@ -9,7 +9,7 @@ import Header from '../components/Header'
 import { MentorModel } from './MentorModel'
 import { useAppConfig } from '../store/useAppConfig'
 import { useAuth } from '../contexts/AuthContext'
-import { apiFetch, buildAuthUrl } from '../lib/apiFetch'
+import { apiFetch, buildAuthUrl, API_BASE } from '../lib/apiFetch'
 import './aimentor.css'
 
 // Strip markdown, LaTeX, and symbols for clean text-to-speech
@@ -189,24 +189,77 @@ function AIMentor() {
     setIsSpeaking(true)
 
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const HEADTTS_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_TIMEOUT_MS || 12000)
-    const HEADTTS_MAX_RETRIES = Number(import.meta.env.VITE_HEADTTS_MAX_RETRIES || 2)
+    const HEADTTS_TIMEOUT_MS = Number(import.meta.env.VITE_HEADTTS_TIMEOUT_MS || 16000)
+    const HEADTTS_MAX_RETRIES = Number(import.meta.env.VITE_HEADTTS_MAX_RETRIES || 3)
     const HEADTTS_BACKOFF_MS = Number(import.meta.env.VITE_HEADTTS_BACKOFF_MS || 200)
     const HEADTTS_PREFETCH_AHEAD = Math.max(1, Number(import.meta.env.VITE_HEADTTS_PREFETCH_AHEAD || 6))
     const HEADTTS_INITIAL_BUFFER = Math.max(1, Number(import.meta.env.VITE_HEADTTS_INITIAL_BUFFER || 2))
     const HEADTTS_INITIAL_BUFFER_WAIT_MS = Number(import.meta.env.VITE_HEADTTS_INITIAL_BUFFER_WAIT_MS || 9000)
+    const HEADTTS_MAX_CHARS = Math.max(60, Number(import.meta.env.VITE_HEADTTS_MAX_CHARS || 120))
 
     const rawSentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text]
+
+    const splitChunkByLength = (chunk, maxChars) => {
+      const normalized = (chunk || '').trim()
+      if (!normalized) return []
+      if (normalized.length <= maxChars) return [normalized]
+
+      const parts = normalized.split(/(?<=[,;:])\s+/)
+      const merged = []
+      let current = ''
+
+      const flush = () => {
+        if (current.trim()) merged.push(current.trim())
+        current = ''
+      }
+
+      for (const part of parts) {
+        const candidate = current ? `${current} ${part}` : part
+        if (candidate.length <= maxChars) {
+          current = candidate
+          continue
+        }
+
+        if (current) flush()
+
+        if (part.length <= maxChars) {
+          current = part
+          continue
+        }
+
+        const words = part.split(/\s+/)
+        let line = ''
+        for (const w of words) {
+          const wordCandidate = line ? `${line} ${w}` : w
+          if (wordCandidate.length <= maxChars) {
+            line = wordCandidate
+          } else {
+            if (line) merged.push(line.trim())
+            line = w
+          }
+        }
+        if (line) merged.push(line.trim())
+      }
+
+      flush()
+      return merged
+    }
     const sentences = rawSentences
       .map((s) => stripForTTS(s))
       .filter((s) => s.trim().length > 1)
-    const finalSentences = sentences.length > 0 ? sentences : [stripForTTS(text)]
+    const initialChunks = sentences.length > 0 ? sentences : [stripForTTS(text)]
+    const finalSentences = initialChunks.flatMap((chunk) => splitChunkByLength(chunk, HEADTTS_MAX_CHARS))
 
     console.log(`[TTS] HeadTTS pipelined playback for ${finalSentences.length} chunks`)
 
-    const HEADTTS_URL = import.meta.env.VITE_TTS_URL || (import.meta.env.DEV ? 'http://localhost:8882' : '')
-    if (!HEADTTS_URL) {
-      console.warn('[TTS] VITE_TTS_URL is not configured; skipping speech.')
+    const HEADTTS_URL = (import.meta.env.VITE_TTS_URL || '').trim()
+    const normalizedDirectTts = HEADTTS_URL ? `${HEADTTS_URL.replace(/\/$/, '')}/v1/synthesize` : ''
+    const normalizedApiBase = (API_BASE || '').replace(/\/$/, '')
+    const proxyTts = `${normalizedApiBase}/api/tts`
+    const ttsEndpoints = [...new Set([normalizedDirectTts, proxyTts].filter(Boolean))]
+
+    if (ttsEndpoints.length === 0) {
+      console.warn('[TTS] No TTS endpoints configured; skipping speech.')
       setIsSpeaking(false)
       setVisemeSchedule(null)
       return
@@ -240,35 +293,53 @@ function AIMentor() {
 
         const controller = new AbortController()
         activeFetchControllersRef.current.add(controller)
-        const timeoutMs = HEADTTS_TIMEOUT_MS + (attempt - 1) * 3000
+        const adaptiveBaseTimeout = Math.max(
+          HEADTTS_TIMEOUT_MS,
+          Math.min(30000, HEADTTS_TIMEOUT_MS + Math.floor(chunkText.length * 55))
+        )
+        const timeoutMs = adaptiveBaseTimeout + (attempt - 1) * 2500
         const timer = setTimeout(() => controller.abort(), timeoutMs)
 
         try {
-          const res = await fetch(`${HEADTTS_URL}/v1/synthesize`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal,
-            body: JSON.stringify({
-              input: chunkText,
-              voice: 'af_heart',
-              language: 'en-us',
-              speed: 1,
-              audioEncoding: 'wav'
-            })
-          })
+          for (const endpoint of ttsEndpoints) {
+            try {
+              const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+                body: JSON.stringify({
+                  input: chunkText,
+                  voice: 'af_heart',
+                  language: 'en-us',
+                  speed: 1,
+                  audioEncoding: 'wav'
+                })
+              })
 
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`)
+              if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`)
+              }
+
+              const contentType = res.headers.get('content-type') || ''
+              if (contentType.includes('application/json')) {
+                const data = await res.json()
+                const blobUrl = decodeBase64ToBlobUrl(data?.audio, 'audio/wav')
+                if (!blobUrl) {
+                  throw new Error('No audio payload in HeadTTS response')
+                }
+
+                const visemes = normalizeVisemeSchedule(data)
+                return { blobUrl, visemes }
+              }
+
+              const audioBlob = await res.blob()
+              const blobUrl = URL.createObjectURL(audioBlob)
+              return { blobUrl, visemes: [] }
+            } catch (endpointError) {
+              lastError = endpointError
+              console.warn(`[TTS] Endpoint failed on chunk ${chunkIndex + 1}: ${endpoint}`, endpointError)
+            }
           }
-
-          const data = await res.json()
-          const blobUrl = decodeBase64ToBlobUrl(data?.audio, 'audio/wav')
-          if (!blobUrl) {
-            throw new Error('No audio payload in HeadTTS response')
-          }
-
-          const visemes = normalizeVisemeSchedule(data)
-          return { blobUrl, visemes }
         } catch (e) {
           lastError = e
           if (stopSpeakRef.current) return null

@@ -18,7 +18,7 @@ import { auth } from './firebase'
 
 // Use the local dev API base when running the Vite dev server.
 // Production uses the public backend URL configured in Vercel env.
-const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '')
+export const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 /**
  * @param {string} url - The API endpoint path (e.g. '/api/chat')
