@@ -4,16 +4,18 @@ COLOR="\e[1;36m"
 RESET="\e[0m"
 
 echo -e "${COLOR}=================================================${RESET}"
-echo -e "${COLOR}          🗣️ POCKET-TTS (TEXT-TO-SPEECH)          ${RESET}"
+echo -e "${COLOR}          🗣️ HEADTTS (TEXT-TO-SPEECH)            ${RESET}"
 echo -e "${COLOR}=================================================${RESET}"
-echo -e "${COLOR}Port:     8089${RESET}"
+echo -e "${COLOR}Port:     8882${RESET}"
 echo -e "${COLOR}Purpose:  Generates AI Audio Voices locally      ${RESET}"
 echo -e "${COLOR}=================================================${RESET}"
 echo ""
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PORT="${TTS_PORT:-8089}"
+PORT="${HEADTTS_PORT:-8882}"
+NODE_BIN="${NODE_BIN:-node}"
+CONFIG_FILE="${HEADTTS_CONFIG:-$SCRIPT_DIR/headtts-node.json}"
 
 port_is_listening() {
 	python - "$1" <<'PY'
@@ -31,15 +33,18 @@ PY
 }
 
 # Change to the project directory relative to the script
-cd "$SCRIPT_DIR/Unmute" || exit 1
+cd "$SCRIPT_DIR" || exit 1
 
-# Use the shared project virtual environment so the command works on a fresh machine.
-source "$SCRIPT_DIR/.venv/bin/activate"
+
+if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
+	echo "HeadTTS requires Node.js, but '$NODE_BIN' was not found."
+	exit 1
+fi
 
 if port_is_listening "$PORT"; then
-	echo "Pocket-TTS is already running on port $PORT. Reusing the existing server."
+	echo "HeadTTS is already running on port $PORT. Reusing the existing server."
 	exit 0
 fi
 
-TTS_PORT="$PORT" python unmute/tts/tts_server.py
+exec "$NODE_BIN" "$SCRIPT_DIR/modules/headtts-node.mjs" --config "$CONFIG_FILE"
 

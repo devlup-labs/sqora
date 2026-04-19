@@ -18,16 +18,29 @@ logger = logging.getLogger(__name__)
 
 class LLMService:
     _DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+    _FALLBACK_MODEL = "gemma-4-26b-a4b-it"
     _FALLBACK_THINKING_MESSAGE = "Sorry, I am having trouble thinking right now. Please try again."
     _QUOTA_EXHAUSTED_MESSAGE = "AI service is temporarily unavailable due to quota limits. Please try again in a few minutes."
     _TIMEOUT_MESSAGE = "AI is taking too long to respond right now. Please try again."
     _NO_RESPONSE_MESSAGE = "I could not generate a response just now. Please try again."
+    _RETRYABLE_ERROR_MARKERS = (
+        "503",
+        "unavailable",
+        "high demand",
+        "resource_exhausted",
+        "quota",
+        "429",
+        "timeout",
+        "timed out",
+        "deadline",
+    )
 
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.provider = "gemini"
         self.url = None
         self.model = self._DEFAULT_MODEL
+        self.fallback_model = self._FALLBACK_MODEL
         self.api_key = os.getenv("GEMINI_API_KEY")
 
         # Context compaction settings.
@@ -67,6 +80,7 @@ class LLMService:
                     self.provider = llm_config.get("provider", self.provider)
                     self.url = llm_config.get("url", self.url)
                     self.model = llm_config.get("model", self.model)
+                    self.fallback_model = llm_config.get("fallback_model", self.fallback_model)
 
                     compaction = llm_config.get("context_compaction", {})
                     if isinstance(compaction, dict):
@@ -400,20 +414,43 @@ class LLMService:
             return "AI is not configured. Please check your API key."
         try:
             messages = await asyncio.to_thread(self._build_messages, message, chat_history)
-            
-            # Using the new SDK
-            response: Any = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.model,
-                contents=messages,
-                config={"temperature": 0}
-            )
-            
-            res_text = str(getattr(response, "text", ""))
-            if res_text:
-                return res_text
-            logger.warning("LLM returned empty text payload")
-            return self._NO_RESPONSE_MESSAGE
+
+            last_error: Exception | None = None
+            for model_name in self._model_candidates():
+                try:
+                    response: Any = await asyncio.to_thread(
+                        self._generate_with_model,
+                        model_name,
+                        messages,
+                        False,
+                    )
+
+                    res_text = str(getattr(response, "text", "")).strip()
+                    if res_text:
+                        if model_name != self.model:
+                            logger.info("Primary model failed; used fallback model %s", model_name)
+                        return res_text
+
+                    logger.warning("LLM returned empty text payload from model %s", model_name)
+                    last_error = RuntimeError("LLM returned empty text payload")
+                except Exception as e:
+                    last_error = e
+                    if model_name == self.model and self._is_retryable_model_error(e):
+                        logger.warning(
+                            "Primary model %s failed, retrying with fallback %s: %s",
+                            self.model,
+                            self.fallback_model,
+                            e,
+                        )
+                        continue
+
+                    logger.error("LLM Error on model %s: %s", model_name, e)
+                    if model_name != self.model or not self._is_retryable_model_error(e):
+                        break
+
+            if last_error is None:
+                return self._NO_RESPONSE_MESSAGE
+            return self._classify_exception_message(last_error)
         except Exception as e:
             logger.error(f"LLM Error: {e}")
             return self._classify_exception_message(e)
@@ -431,6 +468,26 @@ class LLMService:
         if "timeout" in msg or "timed out" in msg or "deadline" in msg:
             return self._TIMEOUT_MESSAGE
         return self._FALLBACK_THINKING_MESSAGE
+
+    def _model_candidates(self) -> list[str]:
+        candidates = [self.model, self.fallback_model]
+        ordered: list[str] = []
+        for candidate in candidates:
+            if candidate and candidate not in ordered:
+                ordered.append(candidate)
+        return ordered
+
+    def _is_retryable_model_error(self, error: Exception) -> bool:
+        msg = str(error).lower()
+        return any(marker in msg for marker in self._RETRYABLE_ERROR_MARKERS)
+
+    def _generate_with_model(self, model_name: str, messages: list, stream: bool = False):
+        return self.client.models.generate_content(
+            model=model_name,
+            contents=messages,
+            config={"temperature": 0},
+            stream=stream,
+        )
 
     def is_degraded_response(self, reply: str) -> bool:
         text = (reply or "").strip().lower()
@@ -455,17 +512,42 @@ class LLMService:
             return
         try:
             messages = self._build_messages(message, chat_history)
-            
-            # Using the new SDK for streaming
-            stream = self.client.models.generate_content(
-                model=self.model,
-                contents=messages,
-                config={"temperature": 0},
-                stream=True
-            )
-            for chunk in stream:
-                if hasattr(chunk, "text") and chunk.text:
-                    yield chunk.text
+
+            last_error: Exception | None = None
+            for model_name in self._model_candidates():
+                try:
+                    stream = self._generate_with_model(model_name, messages, True)
+                    yielded_any = False
+
+                    for chunk in stream:
+                        if hasattr(chunk, "text") and chunk.text:
+                            yielded_any = True
+                            if model_name != self.model:
+                                logger.info("Primary model failed; used fallback model %s for streaming", model_name)
+                            yield chunk.text
+
+                    if yielded_any:
+                        return
+
+                    logger.warning("LLM stream returned empty text payload from model %s", model_name)
+                    last_error = RuntimeError("LLM stream returned empty text payload")
+                except Exception as e:
+                    last_error = e
+                    if model_name == self.model and self._is_retryable_model_error(e):
+                        logger.warning(
+                            "Primary model %s failed during streaming, retrying with fallback %s: %s",
+                            self.model,
+                            self.fallback_model,
+                            e,
+                        )
+                        continue
+
+                    logger.error("LLM Stream Error on model %s: %s", model_name, e)
+                    if model_name != self.model or not self._is_retryable_model_error(e):
+                        break
+
+            if last_error is not None:
+                yield self._classify_exception_message(last_error)
         except Exception as e:
             logger.error(f"LLM Stream Error: {e}")
             yield self._classify_exception_message(e)

@@ -1,0 +1,18 @@
+[Unit]
+Description=SQORA Cloudflare Named Tunnel (TTS)
+After=network-online.target headtts.service
+Wants=network-online.target headtts.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/raid/sqora/sqora
+EnvironmentFile=/home/raid/sqora/sqora/.env.tunnel
+ExecStart=/home/raid/sqora/sqora/cloudflared tunnel run --token ${CF_TUNNEL_TTS_TOKEN}
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+StandardOutput=append:/home/raid/sqora/sqora/cloudflared-tts-named.log
+StandardError=append:/home/raid/sqora/sqora/cloudflared-tts-named.log
+
+[Install]
+WantedBy=default.target

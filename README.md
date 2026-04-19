@@ -26,7 +26,7 @@ SQORA is an AI-powered competitive exam preparation platform for JEE/NEET aspira
 │                              │       │                                     │
 │   React SPA (static build)   │──────▶│  FastAPI Backend  (port 8000)       │
 │                              │       │  Manim Worker     (background)      │
-│  VITE_API_URL = raid server  │       │  TTS Server       (port 8089)       │
+│  VITE_API_URL = raid server  │       │  TTS Server       (port 8882)       │
 └──────────────────────────────┘       └─────────────────────────────┬───────┘
                                                                      │
                                               ┌──────────────────────┘
@@ -42,7 +42,7 @@ SQORA is an AI-powered competitive exam preparation platform for JEE/NEET aspira
 | Frontend | React 18, Vite, React Router, Three.js, KaTeX | **Vercel** |
 | Backend API | FastAPI, Gemini, Firebase Auth | **RAID Server** |
 | Manim Worker | Python, Manim 0.19, Gemini code gen | **RAID Server** |
-| TTS Server | Python (Pocket-TTS) | **RAID Server** |
+| TTS Server | HeadTTS (Node.js + WebSocket/REST) | **RAID Server** |
 
 ### User Data
 
@@ -118,7 +118,7 @@ cd Frontend && npm run dev
 # Terminal 3 — Manim Worker
 ./start_manim.sh
 
-# Terminal 4 — TTS Server (optional)
+# Terminal 4 — HeadTTS Server (optional)
 ./start_tts.sh
 ```
 
@@ -280,7 +280,7 @@ Long conversations are summarized before sending to Gemini:
 | Backend | FastAPI, Google Gemini (`google-genai` SDK), Firebase Admin SDK |
 | Animation | Manim 0.19, Gemini code generation, ffmpeg |
 | Auth | Firebase Authentication (Google Sign-In) |
-| TTS | Pocket-TTS |
+| TTS | HeadTTS |
 | Deployment | Vercel (frontend), IITJ RAID Server (backend + worker) |
 
 ## License

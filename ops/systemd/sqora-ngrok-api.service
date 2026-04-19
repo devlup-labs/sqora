@@ -1,0 +1,18 @@
+[Unit]
+Description=SQORA ngrok Tunnel (API)
+After=network-online.target sqora-backend.service
+Wants=network-online.target sqora-backend.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/raid/sqora/sqora
+EnvironmentFile=/home/raid/sqora/sqora/.env.tunnel
+ExecStart=/bin/sh -lc 'if [ -n "${NGROK_API_DOMAIN:-}" ]; then exec "${NGROK_BIN:-/home/raid/.local/bin/ngrok}" http --domain "${NGROK_API_DOMAIN}" 8000; else exec "${NGROK_BIN:-/home/raid/.local/bin/ngrok}" http 8000; fi'
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+StandardOutput=append:/home/raid/sqora/sqora/ngrok-api.log
+StandardError=append:/home/raid/sqora/sqora/ngrok-api.log
+
+[Install]
+WantedBy=default.target

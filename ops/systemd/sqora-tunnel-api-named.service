@@ -1,0 +1,18 @@
+[Unit]
+Description=SQORA Cloudflare Named Tunnel (API)
+After=network-online.target sqora-backend.service
+Wants=network-online.target sqora-backend.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/raid/sqora/sqora
+EnvironmentFile=/home/raid/sqora/sqora/.env.tunnel
+ExecStart=/home/raid/sqora/sqora/cloudflared tunnel run --token ${CF_TUNNEL_API_TOKEN}
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+StandardOutput=append:/home/raid/sqora/sqora/cloudflared-api-named.log
+StandardError=append:/home/raid/sqora/sqora/cloudflared-api-named.log
+
+[Install]
+WantedBy=default.target

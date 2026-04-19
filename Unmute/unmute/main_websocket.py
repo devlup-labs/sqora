@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from unmute.sqora_routes import router as sqora_router
+from unmute.llm.rag_guard import run_rag_startup_guard
 from dotenv import load_dotenv
 import os
 
@@ -41,6 +42,21 @@ app.add_middleware(
 
 # Include the main AI chat, auth, and database routing logic
 app.include_router(sqora_router)
+
+
+@app.on_event("startup")
+async def startup_rag_guard_check():
+    # Run a lightweight safety check and write alert file if vector count drops.
+    try:
+        guard_result = run_rag_startup_guard()
+        if guard_result.get("status") == "alert":
+            logger.error("RAG startup guard alert: %s", guard_result)
+        elif guard_result.get("status") == "error":
+            logger.error("RAG startup guard error: %s", guard_result)
+        else:
+            logger.info("RAG startup guard ok: %s", guard_result)
+    except Exception as exc:
+        logger.error("RAG startup guard crashed: %s", exc)
 
 @app.get("/")
 def root():
